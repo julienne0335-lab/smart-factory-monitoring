@@ -10,6 +10,9 @@
 #   보낼지 결정 → 해당 routes 함수 실행 → service 호출 → dao 호출 → DB
 # =============================================================================
 
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template
 from extensions import socketio   # ← 여기서 가져옴
 

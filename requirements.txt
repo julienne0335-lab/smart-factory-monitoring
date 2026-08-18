@@ -4,3 +4,4 @@ PyMySQL
 python-dotenv
 anthropic
 gunicorn
+eventlet
