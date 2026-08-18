@@ -1,0 +1,271 @@
+/*
+  style.css
+  ──────────────────────────────────────────────────────────
+  최소한의 대시보드 스타일.
+  핵심은 .row-alert 클래스 — main.js에서 status가 '오류정지'인
+  로봇 행에 이 클래스를 붙여서 시각적으로 강조한다.
+*/
+
+body {
+  font-family: "Pretendard", "Apple SD Gothic Neo", sans-serif;
+  background-color: #f5f6f8;
+  color: #222;
+  padding: 24px;
+}
+
+/* 공통 네비게이션 바 (로봇/에러/워크로그 3개 페이지 상단에 동일하게 들어감) */
+.main-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.main-nav a {
+  padding: 8px 14px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: #444;
+  background-color: white;
+  font-size: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.main-nav a:hover {
+  background-color: #eef1f6;
+}
+
+/* 현재 보고 있는 페이지의 링크는 파란색으로 강조 */
+.main-nav a.active {
+  background-color: #2f6fed;
+  color: white;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 22px;
+  margin-bottom: 16px;
+}
+
+h2 {
+  font-size: 17px;
+  margin-top: 28px;
+  margin-bottom: 8px;
+}
+
+.section-divider {
+  margin: 32px 0;
+  border: none;
+  border-top: 1px solid #d9dde3;
+}
+
+.hint-text {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 16px;
+}
+
+.status-message {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+/* 워크로그 검색 폼 */
+#search-form {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  background-color: white;
+  padding: 14px 18px;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+#search-form label {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#search-form input[type="date"] {
+  padding: 5px 8px;
+  border: 1px solid #d9dde3;
+  border-radius: 4px;
+}
+
+/* worker_type이 HUMAN인 워크로그 행 강조 (경고 아님, 구분용) */
+.row-human {
+  background-color: #fff8e1;
+}
+
+button {
+  padding: 8px 16px;
+  margin-bottom: 12px;
+  border: none;
+  border-radius: 6px;
+  background-color: #2f6fed;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+button:hover {
+  background-color: #1e56c9;
+}
+
+#status-message {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: white;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+th, td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 14px;
+}
+
+th {
+  background-color: #eef1f6;
+  font-weight: 600;
+}
+
+/* status === '오류정지'인 로봇 행 강조 */
+.row-alert {
+  background-color: #fde8e8;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.row-alert:hover {
+  background-color: #fbd0d0;
+}
+
+tr:hover:not(.row-alert) {
+  background-color: #f8f9fb;
+}
+
+/* =============================================================================
+   실시간 알림 UI (5단계 — WebSocket)
+   ============================================================================= */
+
+.main-nav {
+  justify-content: space-between;
+}
+
+.nav-links {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#factory-select {
+  padding: 6px 10px;
+  border: 1px solid #d9dde3;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: white;
+}
+
+.notif-wrapper {
+  position: relative;
+}
+
+.bell-btn {
+  position: relative;
+  background: white;
+  border: 1px solid #d9dde3;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0;
+}
+
+.bell-btn:hover {
+  background-color: #eef1f6;
+}
+
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background-color: #e11d48;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  display: none; /* realtime.js가 unreadCount에 따라 flex로 토글 */
+}
+
+.notif-dropdown {
+  display: none;
+  position: absolute;
+  top: 44px;
+  right: 0;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+}
+
+.notif-dropdown.open {
+  display: block;
+}
+
+.notif-dropdown ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.notif-item {
+  padding: 10px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid #f0f1f3;
+}
+
+.notif-item:last-child {
+  border-bottom: none;
+}
+
+.notif-time {
+  display: block;
+  color: #999;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.notif-empty {
+  padding: 16px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}

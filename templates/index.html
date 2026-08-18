@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>스마트팩토리 로봇 모니터링</title>
+
+  <!--
+    static 폴더 안의 CSS 파일을 연결한다.
+    Flask는 /static/... 경로로 static 폴더 내용물을 자동으로 서빙해준다.
+    (별도 라우트를 만들 필요 없음 — Flask 기본 기능)
+  -->
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!--
+    공통 네비게이션 바.
+    페이지 3개(로봇/에러/워크로그)를 오가는 단순 링크 모음.
+    각 페이지(templates/*.html)에 동일하게 복사해서 넣는다.
+    현재 페이지에는 "active" 클래스를 붙여 강조 표시한다.
+  -->
+<nav class="main-nav">
+  <div class="nav-links">
+    <a href="/" class="active">🤖 로봇 목록</a>
+    <a href="/errors">⚠️ 에러 현황</a>
+    <a href="/worklogs">📋 워크로그 조회</a>
+  </div>
+
+  <div class="nav-right">
+    <select id="factory-select">
+      <option value="1">서울공장</option>
+      <option value="2">부산공장</option>
+      <option value="3">인천공장</option>
+    </select>
+
+    <div class="notif-wrapper">
+      <button id="notif-bell" class="bell-btn">
+        🔔
+        <span id="notif-badge" class="notif-badge">0</span>
+      </button>
+      <div id="notif-dropdown" class="notif-dropdown">
+        <ul id="notif-list"></ul>
+      </div>
+    </div>
+  </div>
+</nav>
+
+  <h1>🤖 로봇 목록 대시보드</h1>
+
+  <!-- 새로고침 버튼: 클릭하면 main.js의 loadRobots() 함수를 다시 실행 -->
+  <button onclick="loadRobots()">새로고침</button>
+
+  <!-- 로딩/에러 메시지를 보여줄 자리 (평소엔 비어있음) -->
+  <p id="status-message"></p>
+
+  <table id="robot-table">
+    <thead>
+      <tr>
+        <th>로봇 ID</th>
+        <th>모델명</th>
+        <th>라인 ID</th>
+        <th>배터리(%)</th>
+        <th>관절 마모도(%)</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+
+    <!--
+      tbody의 id="robot-table-body"가 핵심이다.
+      main.js에서 document.getElementById('robot-table-body')로 이 태그를 찾아서
+      그 안에 <tr> 행들을 자바스크립트로 채워 넣는다.
+      지금은 비어있지만, 페이지가 열리면 fetch()로 받아온 데이터로 채워진다.
+    -->
+    <tbody id="robot-table-body">
+      <!-- 여기에 로봇 데이터 행(<tr>)들이 JS로 동적으로 추가됨 -->
+    </tbody>
+  </table>
+
+  <!--
+    static 폴더 안의 JS 파일을 연결한다.
+    </body> 바로 위에 두는 이유:
+    HTML 요소(table, tbody 등)들이 먼저 화면에 그려진 다음에
+    JS가 실행되어야 document.getElementById()가 요소를 제대로 찾을 수 있기 때문.
+  -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="/static/js/realtime.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
