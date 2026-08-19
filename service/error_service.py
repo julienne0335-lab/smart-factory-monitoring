@@ -102,21 +102,27 @@ def get_errors_with_robot_info():
     return [_add_pending_flag(e) for e in errors]
 
 
-def create_robot_error(robot_id, error_type):
+def create_robot_error(robot_id, error_type, detail=None):
     """
     새 로봇 에러를 등록하고, 해당 로봇이 속한 공장에 실시간 알림을 보낸다.
 
-    [처리 순서]
-      1. DAO를 통해 DB에 에러 저장
-      2. 저장된 에러가 어느 공장 소속인지 조회 (room 이름 결정용)
-      3. socketio.emit()으로 해당 공장 room에 알림 전송
-    """
-    error_id = error_dao.create_robot_error(robot_id, error_type)
+    [처리 순서 — 순서를 바꾼 이유]
+      1. 먼저 robot_id가 속한 공장(factory_id)부터 조회한다.
+         이게 None이면 "존재하지 않는 로봇"이라는 뜻이므로,
+         DB에 에러를 저장하지도 않고 바로 None을 반환해서
+         routes 계층이 404를 내려줄 수 있게 한다.
+      2. 로봇이 존재하면 그때 DAO를 통해 DB에 에러 저장
+      3. socketio.emit()으로 해당 공장 room에 실시간 알림 전송
 
-    # 이 로봇이 어느 공장 소속인지 알아야 정확한 room으로 보낼 수 있음
-    # get_errors_with_robot_info류 함수처럼 JOIN이 필요하지만,
-    # 여기선 간단히 robot_dao를 재사용해서 line_id → factory_id를 알아내야 함
+    [반환값]
+      int: 새로 생성된 error_id
+      None: robot_id가 존재하지 않는 경우
+    """
     factory_id = error_dao.get_factory_id_by_robot(robot_id)
+    if factory_id is None:
+        return None
+
+    error_id = error_dao.create_robot_error(robot_id, error_type, detail)
 
     socketio.emit('robot_error', {
         'error_id': error_id,
@@ -124,4 +130,4 @@ def create_robot_error(robot_id, error_type):
         'error_type': error_type,
     }, room=f"factory_{factory_id}")
 
-    return error_id
+    return error_id 

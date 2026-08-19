@@ -129,6 +129,66 @@ def get_errors_by_date(start_date, end_date):
         conn.close()
 
 
+def create_robot_error(robot_id, error_type, detail=None):
+    """
+    새 로봇 에러를 1건 등록한다.
+
+    [파라미터]
+      robot_id   (int): 에러가 발생한 로봇 ID
+      error_type (str): '센서이상' / '충돌' / '낙상' / '과부하' / '통신오류' 중 하나
+      detail     (str, 선택): 상세 설명. 안 주면 NULL로 저장됨
+
+    [주의]
+      status는 여기서 안 넣음 → DB 기본값 '미처리'가 자동으로 들어감 (DDL 참고)
+
+    [반환값]
+      int: 새로 생성된 error_id (AUTO_INCREMENT로 DB가 채번한 값)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO RobotError (robot_id, error_type, detail) VALUES (%s, %s, %s)",
+            (robot_id, error_type, detail)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_factory_id_by_robot(robot_id):
+    """
+    로봇이 소속된 공장(factory_id)을 조회한다.
+    - Robot.line_id → Line.factory_id를 조인해서 알아냄
+      (Robot 테이블 자체엔 factory_id 컬럼이 없음, ERD 참고)
+    - socketio 알림을 "그 로봇이 속한 공장 room"으로만 보내기 위해 필요함
+
+    [반환값]
+      int: factory_id
+      None: 존재하지 않는 robot_id인 경우
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT l.factory_id
+            FROM Robot r
+            JOIN Line l ON r.line_id = l.line_id
+            WHERE r.robot_id = %s
+            """,
+            (robot_id,)
+        )
+        row = cursor.fetchone()
+        return row['factory_id'] if row else None
+    finally:
+        conn.close()
+
+
 def get_error_stats_by_robot():
     """
     로봇별 에러 발생 횟수 통계를 반환한다.

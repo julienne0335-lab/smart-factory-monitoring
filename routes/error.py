@@ -176,6 +176,39 @@ def get_errors_with_robot_info():
     return jsonify(errors)
 
 
+# -----------------------------------------------------------------------------
+# POST /errors/robot
+# 새 로봇 에러 등록 + 실시간 알림(socketio) 발송
+# -----------------------------------------------------------------------------
+@error_bp.route('/errors/robot', methods=['POST'])
+def create_robot_error():
+    """
+    새 로봇 에러를 등록한다.
+    - 필수 body: robot_id, error_type
+    - 선택 body: detail
+    - robot_id가 존재하지 않으면 404
+    - 성공하면 201 + 생성된 error_id 반환
+    """
+    data = request.get_json(silent=True) or {}
+    robot_id = data.get('robot_id')
+    error_type = data.get('error_type')
+    detail = data.get('detail')
+
+    if robot_id is None or not error_type:
+        return jsonify({"message": "robot_id와 error_type은 필수입니다."}), 400
+
+    error_id = error_service.create_robot_error(robot_id, error_type, detail)
+
+    if error_id is None:
+        return jsonify({"message": f"robot_id={robot_id}에 해당하는 로봇이 없습니다."}), 404
+
+    return jsonify({
+        "error_id": error_id,
+        "robot_id": robot_id,
+        "error_type": error_type,
+    }), 201
+
+
 # =============================================================================
 # Claude API 에러 로그 분석 (6단계 신규)
 # =============================================================================
