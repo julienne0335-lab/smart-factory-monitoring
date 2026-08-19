@@ -82,6 +82,17 @@
     </tbody>
   </table>
 
+  <!--
+  페이지네이션 컨트롤
+  - 결과가 1페이지뿐이면 worklogs.js가 이 영역 자체를 숨김
+  - "이전/다음" 버튼은 날짜를 안 바꾸고 페이지만 이동함
+-->
+<div id="pagination-controls" class="pagination-controls" style="display: none;">
+  <button id="prev-page-btn" type="button">← 이전</button>
+  <span id="page-indicator"></span>
+  <button id="next-page-btn" type="button">다음 →</button>
+</div>
+
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="/static/js/realtime.js"></script>
   <script src="/static/js/worklogs.js"></script>

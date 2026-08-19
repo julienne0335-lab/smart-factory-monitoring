@@ -5,6 +5,8 @@
 # - routes 계층에서 이 service를 호출함
 # =============================================================================
 
+import math
+
 from dao import worklog_dao
 
 
@@ -33,10 +35,30 @@ def _calculate_duration(log):
 # 작업 로그 조회 함수들
 # -----------------------------------------------------------------------------
 
-def get_worklogs_by_robot(robot_id):
-    """특정 로봇의 작업 로그 조회 + 작업시간(분) 추가"""
-    worklogs = worklog_dao.get_worklogs_by_robot(robot_id)
-    return [_calculate_duration(log) for log in worklogs]
+def _paginate(data, page, per_page, total_count):
+    """
+    페이지네이션 응답 형태로 감싸는 공통 헬퍼.
+    - data 자체(배열)만 반환하던 걸 { data, page, per_page, total_count,
+      total_pages } 형태의 객체로 감싸서, 프론트가 "지금 몇 페이지/전체
+      몇 페이지"를 알 수 있게 함.
+    """
+    total_pages = math.ceil(total_count / per_page) if per_page else 1
+    return {
+        "data": data,
+        "page": page,
+        "per_page": per_page,
+        "total_count": total_count,
+        "total_pages": total_pages,
+    }
+
+
+def get_worklogs_by_robot(robot_id, page=1, per_page=100):
+    """특정 로봇의 작업 로그 조회 + 작업시간(분) 추가 (페이지 단위)"""
+    offset = (page - 1) * per_page
+    total_count = worklog_dao.count_worklogs_by_robot(robot_id)
+    worklogs = worklog_dao.get_worklogs_by_robot(robot_id, limit=per_page, offset=offset)
+    worklogs = [_calculate_duration(log) for log in worklogs]
+    return _paginate(worklogs, page, per_page, total_count)
 
 
 def get_worklogs_by_work_type(work_type):
@@ -51,10 +73,15 @@ def get_worklogs_by_worker_type(worker_type):
     return [_calculate_duration(log) for log in worklogs]
 
 
-def get_worklogs_by_date(start_date, end_date):
-    """날짜 범위로 작업 로그 조회 + 작업시간(분) 추가"""
-    worklogs = worklog_dao.get_worklogs_by_date(start_date, end_date)
-    return [_calculate_duration(log) for log in worklogs]
+def get_worklogs_by_date(start_date, end_date, page=1, per_page=100):
+    """날짜 범위로 작업 로그 조회 + 작업시간(분) 추가 (페이지 단위)"""
+    offset = (page - 1) * per_page
+    total_count = worklog_dao.count_worklogs_by_date(start_date, end_date)
+    worklogs = worklog_dao.get_worklogs_by_date(
+        start_date, end_date, limit=per_page, offset=offset
+    )
+    worklogs = [_calculate_duration(log) for log in worklogs]
+    return _paginate(worklogs, page, per_page, total_count)
 
 
 def get_recent_worklogs(n):

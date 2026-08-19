@@ -23,27 +23,56 @@ from db import get_connection
 
 # ── 기본 조회 함수 ──────────────────────────────────────────────────
 
-def get_worklogs_by_robot(robot_id):
+def get_worklogs_by_robot(robot_id, limit=100, offset=0):
     """
-    특정 로봇의 작업 기록 전체를 반환한다.
+    특정 로봇의 작업 기록을 페이지 단위로 반환한다.
+
+    [페이지네이션을 왜 추가했나 — Locust 부하 테스트에서 발견]
+      원래는 LIMIT 없이 전체를 다 반환했음. 로봇 1대의 작업 기록이
+      평균 13,000건이 넘어서(100만 건 ÷ 75대), 응답 크기가 평균 2.64MB나
+      나왔고, 무료 티어 서버에서 이걸 만들어서 보내는 데만 14~20초가
+      걸렸음(Locust 측정 결과). LIMIT/OFFSET으로 "한 번에 최대 limit건만"
+      가져오도록 바꿔서, 응답 크기와 시간을 확 줄임.
 
     [파라미터]
       robot_id (int): 조회할 로봇의 ID
-
-    [반환값]
-      list of dict: 해당 로봇의 모든 작업 기록
-
-    [사용 예시]
-      get_worklogs_by_robot(5) → 5번 로봇의 작업 기록 전부 반환
+      limit    (int): 한 페이지에 가져올 최대 건수 (기본 100)
+      offset   (int): 몇 번째 행부터 시작할지 (기본 0 = 처음부터)
     """
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM WorkLog WHERE robot_id = %s", (robot_id,))
+        cursor.execute(
+            """
+            SELECT * FROM WorkLog
+            WHERE robot_id = %s
+            ORDER BY started_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            (robot_id, limit, offset)
+        )
         return cursor.fetchall()
     finally:
         conn.close()
 
+
+def count_worklogs_by_robot(robot_id):
+    """
+    특정 로봇의 작업 기록 전체 건수를 반환한다.
+    - 페이지네이션 응답에 total_count / total_pages를 계산해서
+      넣어주기 위해 필요함
+    - SELECT * 대신 COUNT(*)만 쓰면 실제 행 데이터를 안 가져오므로 훨씬 빠름
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) AS cnt FROM WorkLog WHERE robot_id = %s",
+            (robot_id,)
+        )
+        return cursor.fetchone()['cnt']
+    finally:
+        conn.close()
 
 def get_worklogs_by_work_type(work_type):
     """
@@ -86,33 +115,38 @@ def get_worklogs_by_worker_type(worker_type):
         conn.close()
 
 
-def get_worklogs_by_date(start_date, end_date):
+def get_worklogs_by_date(start_date, end_date, limit=100, offset=0):
     """
-    특정 날짜 범위의 작업 기록을 반환한다.
-
-    [파라미터]
-      start_date (str): 시작 날짜 (예: "2024-01-01")
-      end_date   (str): 종료 날짜 (예: "2024-12-31")
-
-    [반환값]
-      list of dict: 해당 기간의 작업 기록
-
-    [참고]
-      BETWEEN은 시작일과 종료일을 모두 포함함 (이상/이하)
-      날짜 범위는 자유롭게 설정 가능 (하루치, 한달치, 1년치 등)
-
-    [사용 예시]
-      get_worklogs_by_date("2024-01-01", "2024-12-31") → 1년치
-      get_worklogs_by_date("2024-01-01", "2024-01-31") → 1달치
+    특정 날짜 범위의 작업 기록을 페이지 단위로 반환한다.
+    - 이유는 get_worklogs_by_robot과 동일 (1주일치만 조회해도 평균 3.77MB, 15~24초)
     """
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM WorkLog WHERE started_at BETWEEN %s AND %s",
-            (start_date, end_date)
+            """
+            SELECT * FROM WorkLog
+            WHERE started_at BETWEEN %s AND %s
+            ORDER BY started_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            (start_date, end_date, limit, offset)
         )
         return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def count_worklogs_by_date(start_date, end_date):
+    """특정 날짜 범위의 작업 기록 전체 건수를 반환한다 (total_pages 계산용)"""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) AS cnt FROM WorkLog WHERE started_at BETWEEN %s AND %s",
+            (start_date, end_date)
+        )
+        return cursor.fetchone()['cnt']
     finally:
         conn.close()
 

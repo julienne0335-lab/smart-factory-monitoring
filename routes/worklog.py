@@ -20,11 +20,16 @@ worklog_bp = Blueprint('worklog', __name__)
 @worklog_bp.route('/worklogs/robot/<int:robot_id>')
 def get_worklogs_by_robot(robot_id):
     """
-    특정 로봇(robot_id)의 작업 로그 목록을 조회한다.
-    - 각 로그에는 duration_minutes(작업시간, 분)가 service 계층에서 계산되어 옴
+    특정 로봇(robot_id)의 작업 로그 목록을 조회한다. (페이지네이션 적용)
+    - page(기본 1), per_page(기본 100) 쿼리 파라미터로 페이지 조절 가능
+    - 예: /worklogs/robot/5?page=2&per_page=50
+    - 응답 형태: {"data": [...], "page": 1, "per_page": 100,
+                 "total_count": 13421, "total_pages": 135}
     """
-    worklogs = worklog_service.get_worklogs_by_robot(robot_id)
-    return jsonify(worklogs)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 100, type=int)
+    result = worklog_service.get_worklogs_by_robot(robot_id, page=page, per_page=per_page)
+    return jsonify(result)
 
 
 # -----------------------------------------------------------------------------
@@ -65,14 +70,15 @@ def get_worklogs_by_date():
     날짜 범위(start ~ end)로 작업 로그를 조회한다.
     - 파라미터가 2개(start_date, end_date)이므로 쿼리 파라미터로 받음
     - 예: /worklogs/date?start=2026-01-01&end=2026-01-31
-    - request.args.get('키') : 쿼리 파라미터 값을 문자열로 꺼냄 (없으면 None)
-    - 날짜는 타입 변환 없이 문자열 그대로 service/DAO로 넘김
-      (DAO의 SQL에서 BETWEEN %s AND %s 형태로 처리)
+    - page(기본 1), per_page(기본 100) 쿼리 파라미터로 페이지 조절 가능
+      (응답 형태는 /worklogs/robot/<id>와 동일)
     """
     start_date = request.args.get('start')
     end_date = request.args.get('end')
-    worklogs = worklog_service.get_worklogs_by_date(start_date, end_date)
-    return jsonify(worklogs)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 100, type=int)
+    result = worklog_service.get_worklogs_by_date(start_date, end_date, page=page, per_page=per_page)
+    return jsonify(result)
 
 
 # -----------------------------------------------------------------------------
