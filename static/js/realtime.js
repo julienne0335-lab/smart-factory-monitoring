@@ -73,7 +73,10 @@
   // -------------------------------------------------------------------
   function connectSocket() {
     const factoryId = getSelectedFactoryId();
-    const socket = io({ query: { factory_id: factoryId } });
+    const socket = io({
+      query: { factory_id: factoryId },
+      transports: ['polling']   // WebSocket 업그레이드 시도 자체를 막음 (gthread 호환)
+    });
 
     socket.on('connect', () => {
       console.log(`소켓 연결됨 (factory_id=${factoryId})`);
