@@ -70,8 +70,9 @@ h2 {
   margin-bottom: 12px;
 }
 
-/* 워크로그 검색 폼 */
-#search-form {
+/* 검색 폼 (워크로그/로봇 목록 공통) — 필터 개수가 늘어나서 grid로 감쌈 */
+#search-form,
+#robot-search-form {
   background-color: white;
   padding: 14px 18px;
   border-radius: 8px;
@@ -86,7 +87,8 @@ h2 {
   margin-bottom: 14px;
 }
 
-#search-form label {
+#search-form label,
+#robot-search-form label {
   font-size: 13px;
   display: flex;
   flex-direction: column;
@@ -94,35 +96,35 @@ h2 {
 }
 
 #search-form input,
-#search-form select {
+#search-form select,
+#robot-search-form input,
+#robot-search-form select {
   padding: 6px 8px;
   border: 1px solid #d9dde3;
   border-radius: 4px;
   font-size: 14px;
 }
 
-.pagination {
+/* 페이지네이션 컨트롤 (이전/다음 버튼 + 페이지 표시) */
+.pagination-controls {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
   margin-top: 12px;
+}
+
+.pagination-controls button {
+  margin-bottom: 0;
+}
+
+#page-indicator {
+  font-size: 13px;
+  color: #666;
 }
 
 button:disabled {
   background-color: #c7cad1;
   cursor: not-allowed;
-}
-
-#search-form label {
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-#search-form input[type="date"] {
-  padding: 5px 8px;
-  border: 1px solid #d9dde3;
-  border-radius: 4px;
 }
 
 /* worker_type이 HUMAN인 워크로그 행 강조 (경고 아님, 구분용) */
