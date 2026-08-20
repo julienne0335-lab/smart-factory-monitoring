@@ -157,3 +157,37 @@ def get_worklogs_with_details():
     """
     worklogs = worklog_service.get_worklogs_with_details()
     return jsonify(worklogs)
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/search?robot_id=&line_id=&work_type=&worker_type=&start=&end=&min_minutes=&page=&per_page=
+# 여러 조건을 조합해서 작업 로그 검색 (통합 검색 API)
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/search')
+def search_worklogs():
+    """
+    로봇 / 라인 / 작업유형 / 작업주체 / 날짜범위 / 최소작업시간을
+    자유롭게 조합해서 검색한다. 파라미터는 전부 선택적이며,
+    넘어오지 않은 조건은 무시된다.
+
+    - 예: /worklogs/search?robot_id=5&work_type=조립&start=2026-01-01&end=2026-01-07
+    - 예: /worklogs/search?line_id=2&worker_type=HUMAN&page=2
+    - 응답 형태: {"data": [...], "page": 1, "per_page": 50,
+                 "total_count": 3241, "total_pages": 65}
+      (/worklogs/robot/<id>, /worklogs/date와 동일한 페이지네이션 형태)
+    """
+    robot_id = request.args.get('robot_id', type=int)
+    line_id = request.args.get('line_id', type=int)
+    work_type = request.args.get('work_type')
+    worker_type = request.args.get('worker_type')
+    start_date = request.args.get('start')
+    end_date = request.args.get('end')
+    min_minutes = request.args.get('min_minutes', type=int)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 50, type=int)
+
+    result = worklog_service.search_worklogs(
+        robot_id=robot_id, line_id=line_id, work_type=work_type,
+        worker_type=worker_type, start_date=start_date, end_date=end_date,
+        min_minutes=min_minutes, page=page, per_page=per_page,
+    )
+    return jsonify(result)

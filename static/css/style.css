@@ -72,14 +72,44 @@ h2 {
 
 /* 워크로그 검색 폼 */
 #search-form {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
   background-color: white;
   padding: 14px 18px;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  margin-bottom: 16px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+#search-form label {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#search-form input,
+#search-form select {
+  padding: 6px 8px;
+  border: 1px solid #d9dde3;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.pagination {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button:disabled {
+  background-color: #c7cad1;
+  cursor: not-allowed;
 }
 
 #search-form label {

@@ -1,43 +1,35 @@
 /*
   worklogs.js
   ──────────────────────────────────────────────────────────
-  역할: worklogs.html의 날짜 검색 폼을 처리한다.
-    - "조회" 버튼(또는 Enter) 클릭 → 폼 기본 제출(페이지 새로고침) 막기
-    - 입력된 시작일/종료일을 쿼리 파라미터로 붙여서
-      GET /api/worklogs/date?start=...&end=...&page=... 호출
+  역할: worklogs.html의 통합 검색 폼을 처리한다.
+    - 로봇ID/라인ID/작업유형/작업주체/날짜범위/최소작업시간을
+      전부 선택적으로 조합해서 GET /api/worklogs/search 호출
     - 결과를 테이블에 그리고, 페이지네이션 컨트롤(이전/다음)을 갱신
 
   main.js / errors.js와 다른 점:
     - 페이지가 열리자마자 자동 호출하지 않고, "폼 제출" 이벤트가
-      일어났을 때만 fetch를 실행한다. (사용자가 날짜를 직접 고르므로)
+      일어났을 때만 fetch를 실행한다. (100만 건 테이블이라 조건 없는
+      최초 조회를 의도적으로 막음 — 사용자가 조건을 직접 고르므로)
 */
 
 
 // -----------------------------------------------------------------------
-// 현재 조회 상태를 기억해두는 변수들
-// - "이전/다음" 버튼을 눌렀을 때 날짜는 그대로 두고 page만 바꿔서
-//   다시 조회해야 하므로, 마지막으로 검색한 조건을 여기에 저장해둔다.
+// 마지막으로 검색에 사용한 필터 조건들을 기억해두는 변수들
+// - "이전/다음" 버튼을 눌렀을 때 필터는 그대로 두고 page만 바꿔서
+//   다시 조회해야 하므로, 마지막 검색 조건을 여기에 저장해둔다.
 // -----------------------------------------------------------------------
-let currentStartDate = null;
-let currentEndDate = null;
+let currentFilters = {};
 let currentPage = 1;
 let currentTotalPages = 1;
 
 
-// -----------------------------------------------------------------------
-// 폼 요소를 가져와서 "submit" 이벤트를 감지한다.
-// - <form id="search-form">에 사용자가 버튼을 누르거나 Enter를 치면
-//   브라우저 기본 동작은 "페이지를 새로고침하며 폼을 제출"하는 것인데,
-//   우리는 그걸 원하지 않는다 (fetch로 비동기 처리할 것이므로).
-// - event.preventDefault()로 그 기본 동작을 막는다.
-// -----------------------------------------------------------------------
 document.getElementById('search-form').addEventListener('submit', function (event) {
   event.preventDefault();   // 페이지 새로고침 방지
   currentPage = 1;          // 새로 검색하면 항상 1페이지부터 다시 봄
   searchWorklogs();
 });
 
-// "이전" 버튼: 1페이지보다 클 때만 동작 (0페이지나 음수로는 안 감)
+// "이전" 버튼: 1페이지보다 클 때만 동작
 document.getElementById('prev-page-btn').addEventListener('click', function () {
   if (currentPage > 1) {
     currentPage -= 1;
@@ -55,17 +47,26 @@ document.getElementById('next-page-btn').addEventListener('click', function () {
 
 
 /**
- * 입력된 날짜 범위로 워크로그를 "처음부터" 조회하는 함수.
- * 폼 제출(조회 버튼) 시 위 이벤트 리스너에서 호출된다.
- * 실제 fetch는 fetchWorklogs()가 담당한다 (날짜/페이지 상태만 여기서 준비).
+ * 폼에 입력된 필터 조건들을 모아서 currentFilters에 저장한다.
+ * 조건이 하나도 없으면(=전체 100만 건) 위험하므로 요청 자체를 막는다.
+ * 실제 fetch는 fetchWorklogs()가 담당한다.
  */
 function searchWorklogs() {
-  currentStartDate = document.getElementById('start-date').value;   // 예: "2024-01-01"
-  currentEndDate = document.getElementById('end-date').value;
+  const statusMessage = document.getElementById('worklog-status-message');
 
-  // 날짜를 둘 다 안 골랐으면 요청 자체를 보내지 않고 사용자에게 안내
-  if (!currentStartDate || !currentEndDate) {
-    document.getElementById('worklog-status-message').textContent = '시작일과 종료일을 모두 선택해주세요.';
+  currentFilters = {
+    robot_id: document.getElementById('filter-robot-id').value,
+    line_id: document.getElementById('filter-line-id').value,
+    work_type: document.getElementById('filter-work-type').value,
+    worker_type: document.getElementById('filter-worker-type').value,
+    start: document.getElementById('start-date').value,
+    end: document.getElementById('end-date').value,
+    min_minutes: document.getElementById('filter-min-minutes').value,
+  };
+
+  const hasAnyFilter = Object.values(currentFilters).some(function (v) { return v !== ''; });
+  if (!hasAnyFilter) {
+    statusMessage.textContent = '조건을 하나 이상 선택해주세요.';
     return;
   }
 
@@ -74,27 +75,26 @@ function searchWorklogs() {
 
 
 /**
- * currentStartDate / currentEndDate / currentPage 기준으로 실제 API를 호출한다.
+ * currentFilters / currentPage 기준으로 실제 API를 호출한다.
  * "조회" 버튼과 "이전/다음" 버튼이 공통으로 이 함수를 호출한다
- * (날짜는 그대로 두고 페이지만 바뀌는 경우가 있어서 fetch 로직을 따로 뺐다).
+ * (조건은 그대로 두고 페이지만 바뀌는 경우가 있어서 fetch 로직을 따로 뺐다).
  */
 function fetchWorklogs() {
   const statusMessage = document.getElementById('worklog-status-message');
   statusMessage.textContent = '조회 중...';
 
   // -----------------------------------------------------------------
-  // 쿼리 파라미터 붙이기
-  // - worklog.py의 GET /worklogs/date?start=...&end=...&page=... 라우트에 맞춰
-  //   URL 뒤에 붙인다. per_page는 안 붙이면 서버 기본값(100)이 적용됨.
-  // - encodeURIComponent()로 감싸는 이유:
-  //   날짜 형식(YYYY-MM-DD)은 특수문자가 없어서 사실 없어도 되지만,
-  //   URL에 값을 넣을 때는 습관적으로 항상 인코딩해주는 게 안전하다.
+  // URLSearchParams: 값이 있는 항목만 골라서 쿼리 문자열로 조립해준다.
+  // - currentFilters를 순회하면서 빈 값('')은 아예 append하지 않음
+  //   → 서버 쪽 request.args.get()이 None을 받아서 "조건 없음"으로 처리됨
   // -----------------------------------------------------------------
-  const url = '/api/worklogs/date?start=' + encodeURIComponent(currentStartDate)
-            + '&end=' + encodeURIComponent(currentEndDate)
-            + '&page=' + currentPage;
+  const params = new URLSearchParams();
+  Object.entries(currentFilters).forEach(function ([key, value]) {
+    if (value !== '') params.append(key, value);
+  });
+  params.append('page', currentPage);
 
-  fetch(url)
+  fetch('/api/worklogs/search?' + params.toString())
     .then(function (response) {
       if (!response.ok) {
         throw new Error('서버 응답 오류: ' + response.status);
@@ -106,7 +106,7 @@ function fetchWorklogs() {
       currentPage = result.page;
       currentTotalPages = result.total_pages;
 
-      statusMessage.textContent = currentStartDate + ' ~ ' + currentEndDate + ' 기간 워크로그 총 '
+      statusMessage.textContent = '조건에 맞는 워크로그 총 '
         + result.total_count + '건 중 ' + result.data.length + '건 표시';
 
       renderWorklogTable(result.data);
@@ -154,7 +154,7 @@ function renderWorklogTable(worklogs) {
   tableBody.innerHTML = '';
 
   if (worklogs.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="7">해당 기간에 조회된 워크로그가 없습니다.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="7">조건에 맞는 워크로그가 없습니다.</td></tr>';
     return;
   }
 
@@ -180,5 +180,4 @@ function renderWorklogTable(worklogs) {
 }
 
 // 페이지가 처음 열렸을 때는 자동 조회하지 않는다.
-// (기본 날짜값이 폼에 채워져 있으므로, 사용자가 "조회" 버튼을 눌러야 실행됨 —
-//  100만 건 테이블이므로 페이지 열자마자 무조건 쿼리를 날리지 않도록 의도적으로 막음)
+// (100만 건 테이블이므로 사용자가 조건을 고르고 "조회"를 눌러야 실행됨)

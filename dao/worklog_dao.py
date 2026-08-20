@@ -309,3 +309,114 @@ def get_long_worklogs(min_minutes):
         return cursor.fetchall()
     finally:
         conn.close()
+
+# ── 통합 검색 함수 (여러 필터 조합 + 페이지네이션) ──────────────────
+
+def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=None,
+                     start_date=None, end_date=None, min_minutes=None,
+                     limit=100, offset=0):
+    """
+    여러 조건을 동시에 조합해서 작업 로그를 페이지 단위로 검색한다.
+    (get_worklogs_by_robot()/get_worklogs_by_date()와 동일하게 limit/offset 방식)
+
+    [파라미터] (전부 선택적 — None/빈값이면 해당 조건은 무시됨)
+      robot_id     (int) : 특정 로봇으로 좁히기
+      line_id      (int) : 특정 라인으로 좁히기 (Robot과 JOIN 필요)
+      work_type    (str) : 작업 유형 (예: "조립")
+      worker_type  (str) : 작업 주체 ("ROBOT" 또는 "HUMAN")
+      start_date   (str) : 시작 날짜 (end_date와 "함께" 넘겨야 조건이 걸림)
+      end_date     (str) : 종료 날짜
+      min_minutes  (int) : 이 시간(분) 이상 걸린 작업만
+      limit, offset       : 페이지네이션
+
+    [반환값]
+      list of dict — 조건에 맞는 작업 로그 (이번 페이지 분량만)
+      전체 건수는 count_search_worklogs()로 별도 조회
+
+    [주의: SQL 인젝션 안전성]
+      아래 f-string은 컬럼명/테이블명 같은 "고정된 SQL 조각"만 조립하고,
+      실제 값(robot_id, work_type 등)은 전부 %s 자리표시자를 통해
+      pymysql이 안전하게 이스케이프 처리함. 사용자 입력값이 f-string
+      안에 직접 들어가는 일은 없음.
+    """
+    where_clause, from_clause, params = _build_worklog_search_conditions(
+        robot_id, line_id, work_type, worker_type, start_date, end_date, min_minutes
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        query = f"""
+            SELECT w.* {from_clause} {where_clause}
+            ORDER BY w.started_at DESC
+            LIMIT %s OFFSET %s
+        """
+        cursor.execute(query, params + [limit, offset])
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def count_search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=None,
+                           start_date=None, end_date=None, min_minutes=None):
+    """search_worklogs()와 동일한 조건의 전체 건수를 반환한다 (total_pages 계산용)"""
+    where_clause, from_clause, params = _build_worklog_search_conditions(
+        robot_id, line_id, work_type, worker_type, start_date, end_date, min_minutes
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) AS cnt {from_clause} {where_clause}", params)
+        return cursor.fetchone()['cnt']
+    finally:
+        conn.close()
+
+
+def _build_worklog_search_conditions(robot_id, line_id, work_type, worker_type,
+                                      start_date, end_date, min_minutes):
+    """
+    search_worklogs() / count_search_worklogs()가 공통으로 쓰는 WHERE절 조립 로직.
+    조건절 문자열 조립 코드가 두 함수에 중복되지 않도록 여기로 뺐다.
+
+    [반환값]
+      (where_clause, from_clause, params) 튜플
+    """
+    conditions = []
+    params = []
+
+    if robot_id is not None:
+        conditions.append("w.robot_id = %s")
+        params.append(robot_id)
+
+    if line_id is not None:
+        conditions.append("r.line_id = %s")
+        params.append(line_id)
+
+    if work_type:
+        conditions.append("w.work_type = %s")
+        params.append(work_type)
+
+    if worker_type:
+        conditions.append("w.worker_type = %s")
+        params.append(worker_type)
+
+    # 날짜는 start/end 둘 다 있을 때만 BETWEEN 조건을 건다
+    if start_date and end_date:
+        conditions.append("w.started_at BETWEEN %s AND %s")
+        params.append(start_date)
+        params.append(end_date)
+
+    if min_minutes is not None:
+        conditions.append("TIMESTAMPDIFF(MINUTE, w.started_at, w.ended_at) >= %s")
+        params.append(min_minutes)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # line_id 필터가 있을 때만 Robot 테이블과 JOIN (없으면 WorkLog만 조회)
+    if line_id is not None:
+        from_clause = "FROM WorkLog w JOIN Robot r ON w.robot_id = r.robot_id"
+    else:
+        from_clause = "FROM WorkLog w"
+
+    return where_clause, from_clause, params

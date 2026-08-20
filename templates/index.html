@@ -47,8 +47,50 @@
 
   <h1>🤖 로봇 목록 대시보드</h1>
 
-  <!-- 새로고침 버튼: 클릭하면 main.js의 loadRobots() 함수를 다시 실행 -->
-  <button onclick="loadRobots()">새로고침</button>
+  <!--
+    필터 폼 — 조건 없이 제출하면 전체 로봇을 조회한다 (75대뿐이라 안전).
+    submit 시 페이지가 새로고침되지 않도록 main.js에서 기본 동작을 막는다.
+  -->
+  <form id="robot-search-form">
+    <div class="filter-grid">
+      <label>
+        로봇 ID:
+        <input type="number" id="filter-robot-id" placeholder="예: 5" min="1">
+      </label>
+      <label>
+        라인 ID:
+        <input type="number" id="filter-line-id" placeholder="예: 2" min="1">
+      </label>
+      <label>
+        공장:
+        <select id="filter-factory-id">
+          <option value="">전체</option>
+          <option value="1">서울공장</option>
+          <option value="2">부산공장</option>
+          <option value="3">인천공장</option>
+        </select>
+      </label>
+      <label>
+        상태:
+        <select id="filter-status">
+          <option value="">전체</option>
+          <option value="가동중">가동중</option>
+          <option value="충전중">충전중</option>
+          <option value="오류정지">오류정지</option>
+          <option value="점검중">점검중</option>
+        </select>
+      </label>
+      <label>
+        배터리(%) 이하:
+        <input type="number" id="filter-max-battery" placeholder="예: 20" min="0" max="100">
+      </label>
+      <label>
+        마모도(%) 이상:
+        <input type="number" id="filter-min-joint-wear" placeholder="예: 80" min="0" max="100">
+      </label>
+    </div>
+    <button type="submit">검색</button>
+  </form>
 
   <!-- 로딩/에러 메시지를 보여줄 자리 (평소엔 비어있음) -->
   <p id="status-message"></p>
@@ -75,6 +117,17 @@
       <!-- 여기에 로봇 데이터 행(<tr>)들이 JS로 동적으로 추가됨 -->
     </tbody>
   </table>
+
+  <!--
+    페이지네이션 컨트롤 — worklogs.html과 동일한 패턴
+    - 결과가 1페이지뿐이면 main.js가 이 영역 자체를 숨김
+    - "이전/다음" 버튼은 필터를 안 바꾸고 페이지만 이동함
+  -->
+  <div id="pagination-controls" class="pagination-controls" style="display: none;">
+    <button id="prev-page-btn" type="button">← 이전</button>
+    <span id="page-indicator"></span>
+    <button id="next-page-btn" type="button">다음 →</button>
+  </div>
 
   <!--
     static 폴더 안의 JS 파일을 연결한다.
