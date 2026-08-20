@@ -133,22 +133,23 @@ def get_long_worklogs(min_minutes):
 
 def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=None,
                      start_date=None, end_date=None, min_minutes=None,
-                     page=1, per_page=50):
+                     factory_id=None, page=1, per_page=50):
     """
     여러 조건을 조합해서 작업 로그 검색 + 작업시간(분) 추가 + 페이지네이션 (기존 _paginate 재사용)
 
     - 예: search_worklogs(robot_id=5, work_type='조립', start_date='2026-01-01', end_date='2026-01-07')
     - 예: search_worklogs(line_id=2, worker_type='HUMAN', page=2)
+    - 예: search_worklogs(factory_id=1, work_type='용접')
     """
     offset = (page - 1) * per_page
 
     total_count = worklog_dao.count_search_worklogs(
-        robot_id=robot_id, line_id=line_id, work_type=work_type,
+        robot_id=robot_id, line_id=line_id, factory_id=factory_id, work_type=work_type,
         worker_type=worker_type, start_date=start_date, end_date=end_date,
         min_minutes=min_minutes,
     )
     worklogs = worklog_dao.search_worklogs(
-        robot_id=robot_id, line_id=line_id, work_type=work_type,
+        robot_id=robot_id, line_id=line_id, factory_id=factory_id, work_type=work_type,
         worker_type=worker_type, start_date=start_date, end_date=end_date,
         min_minutes=min_minutes, limit=per_page, offset=offset,
     )

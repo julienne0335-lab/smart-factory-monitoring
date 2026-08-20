@@ -177,6 +177,7 @@ def search_worklogs():
     """
     robot_id = request.args.get('robot_id', type=int)
     line_id = request.args.get('line_id', type=int)
+    factory_id = request.args.get('factory_id', type=int)
     work_type = request.args.get('work_type')
     worker_type = request.args.get('worker_type')
     start_date = request.args.get('start')
@@ -186,7 +187,7 @@ def search_worklogs():
     per_page = request.args.get('per_page', 50, type=int)
 
     result = worklog_service.search_worklogs(
-        robot_id=robot_id, line_id=line_id, work_type=work_type,
+        robot_id=robot_id, line_id=line_id, factory_id=factory_id, work_type=work_type,
         worker_type=worker_type, start_date=start_date, end_date=end_date,
         min_minutes=min_minutes, page=page, per_page=per_page,
     )

@@ -57,6 +57,7 @@ function searchWorklogs() {
   currentFilters = {
     robot_id: document.getElementById('filter-robot-id').value,
     line_id: document.getElementById('filter-line-id').value,
+    factory_id: document.getElementById('filter-factory-id').value,
     work_type: document.getElementById('filter-work-type').value,
     worker_type: document.getElementById('filter-worker-type').value,
     start: document.getElementById('start-date').value,

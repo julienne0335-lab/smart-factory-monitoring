@@ -312,8 +312,8 @@ def get_long_worklogs(min_minutes):
 
 # ── 통합 검색 함수 (여러 필터 조합 + 페이지네이션) ──────────────────
 
-def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=None,
-                     start_date=None, end_date=None, min_minutes=None,
+def search_worklogs(robot_id=None, line_id=None, factory_id=None, work_type=None,
+                     worker_type=None, start_date=None, end_date=None, min_minutes=None,
                      limit=100, offset=0):
     """
     여러 조건을 동시에 조합해서 작업 로그를 페이지 단위로 검색한다.
@@ -321,7 +321,8 @@ def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=Non
 
     [파라미터] (전부 선택적 — None/빈값이면 해당 조건은 무시됨)
       robot_id     (int) : 특정 로봇으로 좁히기
-      line_id      (int) : 특정 라인으로 좁히기 (Robot과 JOIN 필요)
+      line_id      (int) : 특정 라인으로 좁히기
+      factory_id   (int) : 특정 공장으로 좁히기
       work_type    (str) : 작업 유형 (예: "조립")
       worker_type  (str) : 작업 주체 ("ROBOT" 또는 "HUMAN")
       start_date   (str) : 시작 날짜 (end_date와 "함께" 넘겨야 조건이 걸림)
@@ -330,7 +331,9 @@ def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=Non
       limit, offset       : 페이지네이션
 
     [반환값]
-      list of dict — 조건에 맞는 작업 로그 (이번 페이지 분량만)
+      list of dict — 조건에 맞는 작업 로그 (이번 페이지 분량만).
+      Robot/Line을 항상 JOIN하므로 line_id/factory_id가 결과에 항상
+      같이 찍혀서, 필터가 실제로 걸렸는지 응답만 보고 검증할 수 있음.
       전체 건수는 count_search_worklogs()로 별도 조회
 
     [주의: SQL 인젝션 안전성]
@@ -340,14 +343,15 @@ def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=Non
       안에 직접 들어가는 일은 없음.
     """
     where_clause, from_clause, params = _build_worklog_search_conditions(
-        robot_id, line_id, work_type, worker_type, start_date, end_date, min_minutes
+        robot_id, line_id, factory_id, work_type, worker_type,
+        start_date, end_date, min_minutes
     )
 
     conn = get_connection()
     try:
         cursor = conn.cursor()
         query = f"""
-            SELECT w.* {from_clause} {where_clause}
+            SELECT w.*, r.line_id, l.factory_id {from_clause} {where_clause}
             ORDER BY w.started_at DESC
             LIMIT %s OFFSET %s
         """
@@ -357,11 +361,12 @@ def search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=Non
         conn.close()
 
 
-def count_search_worklogs(robot_id=None, line_id=None, work_type=None, worker_type=None,
-                           start_date=None, end_date=None, min_minutes=None):
+def count_search_worklogs(robot_id=None, line_id=None, factory_id=None, work_type=None,
+                           worker_type=None, start_date=None, end_date=None, min_minutes=None):
     """search_worklogs()와 동일한 조건의 전체 건수를 반환한다 (total_pages 계산용)"""
     where_clause, from_clause, params = _build_worklog_search_conditions(
-        robot_id, line_id, work_type, worker_type, start_date, end_date, min_minutes
+        robot_id, line_id, factory_id, work_type, worker_type,
+        start_date, end_date, min_minutes
     )
 
     conn = get_connection()
@@ -373,7 +378,7 @@ def count_search_worklogs(robot_id=None, line_id=None, work_type=None, worker_ty
         conn.close()
 
 
-def _build_worklog_search_conditions(robot_id, line_id, work_type, worker_type,
+def _build_worklog_search_conditions(robot_id, line_id, factory_id, work_type, worker_type,
                                       start_date, end_date, min_minutes):
     """
     search_worklogs() / count_search_worklogs()가 공통으로 쓰는 WHERE절 조립 로직.
@@ -392,6 +397,10 @@ def _build_worklog_search_conditions(robot_id, line_id, work_type, worker_type,
     if line_id is not None:
         conditions.append("r.line_id = %s")
         params.append(line_id)
+
+    if factory_id is not None:
+        conditions.append("l.factory_id = %s")
+        params.append(factory_id)
 
     if work_type:
         conditions.append("w.work_type = %s")
@@ -413,10 +422,17 @@ def _build_worklog_search_conditions(robot_id, line_id, work_type, worker_type,
 
     where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-    # line_id 필터가 있을 때만 Robot 테이블과 JOIN (없으면 WorkLog만 조회)
-    if line_id is not None:
-        from_clause = "FROM WorkLog w JOIN Robot r ON w.robot_id = r.robot_id"
-    else:
-        from_clause = "FROM WorkLog w"
+    # 항상 Robot, Line 둘 다 JOIN한다 (line_id/factory_id 조건 여부와 무관하게).
+    # 예전엔 line_id 조건이 있을 때만 Robot을 JOIN해서 응답에 line_id가
+    # 안 찍혔고, factory_id는 아예 가져올 방법이 없었음. Robot(75행),
+    # Line(3행) 둘 다 아주 작은 테이블이라 JOIN 비용이 무시할 수준이라,
+    # 항상 두 단계(WorkLog→Robot→Line)까지 JOIN해서 결과에 line_id와
+    # factory_id를 같이 포함시키는 쪽으로 통일함. (로봇 검색의
+    # search_robots()와 동일한 설계)
+    from_clause = (
+        "FROM WorkLog w "
+        "JOIN Robot r ON w.robot_id = r.robot_id "
+        "JOIN Line l ON r.line_id = l.line_id"
+    )
 
     return where_clause, from_clause, params

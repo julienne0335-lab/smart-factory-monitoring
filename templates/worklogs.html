@@ -62,6 +62,15 @@
         <input type="number" id="filter-line-id" placeholder="예: 2" min="1">
       </label>
       <label>
+        공장:
+        <select id="filter-factory-id">
+          <option value="">전체</option>
+          <option value="1">서울공장</option>
+          <option value="2">부산공장</option>
+          <option value="3">인천공장</option>
+        </select>
+      </label>
+      <label>
         작업 유형:
         <input type="text" id="filter-work-type" list="work-type-options" placeholder="예: 조립">
         <datalist id="work-type-options">
