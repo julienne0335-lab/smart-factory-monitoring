@@ -32,6 +32,10 @@ def login_page():
     login_id = request.form.get('login_id', '').strip()
     password = request.form.get('password', '')
 
+    # ⚠️ 임시 디버그 로그 — 원인 확인되는 대로 바로 삭제할 것!
+    print(f"[LOGIN DEBUG] login_id={login_id!r} (len={len(login_id)}) "
+          f"password={password!r} (len={len(password)})")
+
     admin = admin_service.login(login_id, password)
 
     if admin is None:
