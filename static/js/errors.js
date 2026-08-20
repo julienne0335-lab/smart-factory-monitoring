@@ -1,12 +1,13 @@
 /*
   errors.js
   ──────────────────────────────────────────────────────────
-  역할: errors.html 안의 세 섹션을 채운다.
-    1. 로봇별 에러 통계     → GET /api/errors/stats/robot        (필터 없음)
-    2. 로봇 에러 통합검색   → GET /api/errors/robot/search        (필터+페이지네이션)
-    3. 라인 에러 검색       → GET /api/errors/line/search         (필터+페이지네이션, 신규)
+  역할: errors.html 안의 세 섹션을 채운다. (10단계 후 순서 재배치:
+  "지금 급한 것"(미처리 검색) 먼저, "누적 참고용 통계"는 맨 아래로)
+    1. 로봇 에러 통합검색   → GET /api/errors/robot/search        (필터+페이지네이션)
+    2. 라인 에러 검색       → GET /api/errors/line/search         (필터+페이지네이션)
+    3. 로봇별 누적 에러 통계 → GET /api/errors/stats/robot        (필터 없음, 참고용)
 
-  섹션 2/3은 main.js(/api/robots/search) · worklogs.js(/api/worklogs/search)와
+  섹션 1/2는 main.js(/api/robots/search) · worklogs.js(/api/worklogs/search)와
   완전히 동일한 패턴을 쓴다:
     currentFilters(상태 기억) → fetchX()가 API 호출 → 응답의
     {data, page, per_page, total_count, total_pages}를 표 + 페이지네이션에 반영.
@@ -16,70 +17,7 @@
 
 
 // =============================================================
-// 섹션 1. 로봇별 에러 통계 (기존과 동일 — 필터가 필요 없는 집계 데이터)
-// =============================================================
-
-/**
- * /api/errors/stats/robot을 호출해서 통계 테이블을 채운다.
- * 데이터 예: [{robot_id: 1, total_count: 5}, {robot_id: 2, total_count: 12}, ...]
- */
-function loadErrorStats() {
-  const statusMessage = document.getElementById('stats-status-message');
-  statusMessage.textContent = '통계를 불러오는 중...';
-
-  fetch('/api/errors/stats/robot')
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error('서버 응답 오류: ' + response.status);
-      }
-      return response.json();
-    })
-    .then(function (data) {
-      statusMessage.textContent = '총 ' + data.length + '대 로봇의 에러 기록';
-      renderStatsTable(data);
-    })
-    .catch(function (error) {
-      console.error('에러 통계 조회 실패:', error);
-      statusMessage.textContent = '통계를 불러오지 못했습니다. (' + error.message + ')';
-    });
-}
-
-/**
- * 통계 데이터 배열을 stats-table-body에 <tr>로 그린다.
- * 에러 건수가 많은 순(내림차순)으로 정렬해서 보여준다 —
- * "지금 가장 문제가 많은 로봇"이 위쪽에 오도록.
- */
-function renderStatsTable(stats) {
-  const tableBody = document.getElementById('stats-table-body');
-  tableBody.innerHTML = '';
-
-  if (stats.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="2">에러 기록이 없습니다.</td></tr>';
-    return;
-  }
-
-  const sorted = stats.slice().sort(function (a, b) {
-    return b.total_count - a.total_count;
-  });
-
-  sorted.forEach(function (stat) {
-    const row = document.createElement('tr');
-
-    if (stat.total_count >= 5) {
-      row.classList.add('row-alert');
-    }
-
-    row.innerHTML =
-      '<td>' + stat.robot_id + '</td>' +
-      '<td>' + stat.total_count + '건</td>';
-
-    tableBody.appendChild(row);
-  });
-}
-
-
-// =============================================================
-// 섹션 2. 로봇 에러 통합검색
+// 섹션 1. 로봇 에러 통합검색
 // =============================================================
 
 let robotErrorFilters = {};
@@ -214,7 +152,7 @@ function renderRobotErrorTable(errors) {
 
 
 // =============================================================
-// 섹션 3. 라인 에러 검색 (신규 — 섹션 2와 완전히 같은 패턴)
+// 섹션 2. 라인 에러 검색
 // =============================================================
 
 let lineErrorFilters = {};
@@ -344,10 +282,74 @@ function renderLineErrorTable(errors) {
 
 
 // =============================================================
-// 페이지 로드 시 세 섹션 모두 자동 실행
+// 섹션 3. 로봇별 누적 에러 통계 (완료/미처리 구분 없는 전체 누적 집계 —
+// 위 두 섹션과 달리 필터가 없는 참고용 정보라 맨 아래로 배치함)
+// =============================================================
+
+/**
+ * /api/errors/stats/robot을 호출해서 통계 테이블을 채운다.
+ * 데이터 예: [{robot_id: 1, total_count: 5}, {robot_id: 2, total_count: 12}, ...]
+ */
+function loadErrorStats() {
+  const statusMessage = document.getElementById('stats-status-message');
+  statusMessage.textContent = '통계를 불러오는 중...';
+
+  fetch('/api/errors/stats/robot')
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error('서버 응답 오류: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function (data) {
+      statusMessage.textContent = '총 ' + data.length + '대 로봇의 에러 기록';
+      renderStatsTable(data);
+    })
+    .catch(function (error) {
+      console.error('에러 통계 조회 실패:', error);
+      statusMessage.textContent = '통계를 불러오지 못했습니다. (' + error.message + ')';
+    });
+}
+
+/**
+ * 통계 데이터 배열을 stats-table-body에 <tr>로 그린다.
+ * 에러 건수가 많은 순(내림차순)으로 정렬해서 보여준다 —
+ * "지금 가장 문제가 많은 로봇"이 위쪽에 오도록.
+ */
+function renderStatsTable(stats) {
+  const tableBody = document.getElementById('stats-table-body');
+  tableBody.innerHTML = '';
+
+  if (stats.length === 0) {
+    tableBody.innerHTML = '<tr><td colspan="2">에러 기록이 없습니다.</td></tr>';
+    return;
+  }
+
+  const sorted = stats.slice().sort(function (a, b) {
+    return b.total_count - a.total_count;
+  });
+
+  sorted.forEach(function (stat) {
+    const row = document.createElement('tr');
+
+    if (stat.total_count >= 5) {
+      row.classList.add('row-alert');
+    }
+
+    row.innerHTML =
+      '<td>' + stat.robot_id + '</td>' +
+      '<td>' + stat.total_count + '건</td>';
+
+    tableBody.appendChild(row);
+  });
+}
+
+
+// =============================================================
+// 페이지 로드 시 세 섹션 모두 자동 실행 (화면에 보이는 순서대로)
 // (RobotError 500건 / LineError 150건 — worklogs와 달리 소량이라
 //  조건 없는 최초 조회도 안전함, robots 페이지와 동일한 이유)
 // =============================================================
-loadErrorStats();
 searchRobotErrors();
 searchLineErrors();
+loadErrorStats();
