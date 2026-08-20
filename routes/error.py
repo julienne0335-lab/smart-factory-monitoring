@@ -139,12 +139,22 @@ def get_line_errors_by_type(error_type):
 # 로봇별 에러 통계 (집계 데이터)
 # -----------------------------------------------------------------------------
 @error_bp.route('/errors/stats/robot')
+@login_required
 def get_error_stats_by_robot():
     """
     로봇별 에러 통계를 조회한다.
     - 이미 DB에서 집계된 결과이므로 추가 가공 없이 그대로 반환
+
+    [10단계 — 권한 스코프]
+      robots/search 등과 동일하게, 로그인한 관리자의 role에 따라
+      factory_id/line_id를 서버가 강제로 적용한다 (apply_scope).
+      이전엔 이 라우트에 로그인 보호 자체가 빠져 있어서, 누가 로그인했든
+      75대 로봇 통계 전체가 그대로 노출되던 버그가 있었음 — 이번에 수정.
     """
-    errors = error_service.get_error_stats_by_robot()
+    filters = {'factory_id': None, 'line_id': None}
+    apply_scope(get_current_admin(), filters)
+
+    errors = error_service.get_error_stats_by_robot(**filters)
     return jsonify(errors)
 
 

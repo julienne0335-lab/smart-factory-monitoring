@@ -189,23 +189,59 @@ def get_factory_id_by_robot(robot_id):
         conn.close()
 
 
-def get_error_stats_by_robot():
+def get_error_stats_by_robot(factory_id=None, line_id=None):
     """
     로봇별 에러 발생 횟수 통계를 반환한다.
+
+    [파라미터] (10단계 신규 — 둘 다 선택적, None이면 전체 집계)
+      factory_id (int) : 이 공장 소속 로봇만 집계 (Robot+Line JOIN 필요)
+      line_id    (int) : 이 라인 소속 로봇만 집계 (Robot JOIN 필요)
 
     [반환값]
       list of dict: 로봇별 에러 총 발생 건수
       예) [{"robot_id": 1, "total_count": 5}, ...]
+
+    [10단계 이전 버그]
+      원래 필터가 아예 없어서, 누가 로그인했든 이 함수는 항상 75대 로봇
+      전체를 집계해서 돌려줬음 — 로그인/검색 API 4개(robots/search 등)만
+      apply_scope로 보호하고 이 통계 API는 빠뜨려서 생긴 구멍.
+      (공장 반장이 다른 공장 로봇 통계까지, 라인 반장이 다른 라인 로봇
+       통계까지 보이던 원인이 바로 이거였음)
     """
+    conditions = []
+    params = []
+
+    if line_id is not None:
+        conditions.append("r.line_id = %s")
+        params.append(line_id)
+
+    if factory_id is not None:
+        conditions.append("l.factory_id = %s")
+        params.append(factory_id)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    if factory_id is not None:
+        from_clause = (
+            "FROM RobotError e "
+            "JOIN Robot r ON e.robot_id = r.robot_id "
+            "JOIN Line l ON r.line_id = l.line_id"
+        )
+    elif line_id is not None:
+        from_clause = "FROM RobotError e JOIN Robot r ON e.robot_id = r.robot_id"
+    else:
+        from_clause = "FROM RobotError e"
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT robot_id,
+        cursor.execute(f"""
+            SELECT e.robot_id,
                    COUNT(*) AS total_count
-            FROM RobotError
-            GROUP BY robot_id
-        """)
+            {from_clause}
+            {where_clause}
+            GROUP BY e.robot_id
+        """, params)
         return cursor.fetchall()
     finally:
         conn.close()

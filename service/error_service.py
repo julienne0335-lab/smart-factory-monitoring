@@ -84,12 +84,12 @@ def get_line_errors_by_type(error_type):
 # 통계 및 기타
 # -----------------------------------------------------------------------------
 
-def get_error_stats_by_robot():
+def get_error_stats_by_robot(factory_id=None, line_id=None):
     """
-    로봇별 에러 통계 조회
+    로봇별 에러 통계 조회 (10단계 — factory_id/line_id로 스코프 제한 가능)
     - 이미 집계된 통계 데이터이므로 가공 없이 그대로 반환
     """
-    return error_dao.get_error_stats_by_robot()
+    return error_dao.get_error_stats_by_robot(factory_id=factory_id, line_id=line_id)
 
 
 def get_unresolved_errors():
