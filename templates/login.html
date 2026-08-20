@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>스마트팩토리 로그인</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-body">
+
+  <div class="login-card">
+    <h1 class="login-title">🏭 스마트팩토리 로그인</h1>
+    <p class="login-subtitle">공장 반장 / 라인 반장 계정으로 로그인하세요.</p>
+
+    <!--
+      Flask-WTF 없이 순수 <form method="POST">를 그대로 씀.
+      브라우저가 기본으로 이 요청을 하고, 서버(routes/admin.py)가
+      request.form에서 login_id/password를 꺼내서 처리한다.
+    -->
+    <form method="POST" action="/login" class="login-form">
+      <label>
+        아이디
+        <input type="text" name="login_id" placeholder="예: seoul_super" required autofocus>
+      </label>
+      <label>
+        비밀번호
+        <input type="password" name="password" required>
+      </label>
+
+      {% if error %}
+        <p class="login-error">{{ error }}</p>
+      {% endif %}
+
+      <button type="submit">로그인</button>
+    </form>
+  </div>
+
+</body>
+</html>

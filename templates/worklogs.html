@@ -30,6 +30,14 @@
         <ul id="notif-list"></ul>
       </div>
     </div>
+
+    <!-- 10단계: 로그인 정보 표시 + 로그아웃 (session은 Flask가 템플릿에 자동으로 넘겨줌) -->
+    <div class="admin-info">
+      <span>{{ session.admin.name }}님 ({{ '공장 반장' if session.admin.role == '슈퍼' else '라인 반장' }})</span>
+      <form method="POST" action="/logout" class="logout-form">
+        <button type="submit">로그아웃</button>
+      </form>
+    </div>
   </div>
 </nav>
 
@@ -72,15 +80,30 @@
       </label>
       <label>
         작업 유형:
-        <input type="text" id="filter-work-type" list="work-type-options" placeholder="예: 조립">
-        <datalist id="work-type-options">
-          <option value="용접"><option value="도장"><option value="조립">
-          <option value="품질검사"><option value="부품이송">
-          <option value="웨이퍼절삭"><option value="노광"><option value="식각">
-          <option value="세정"><option value="검사">
-          <option value="원료투입"><option value="가공"><option value="포장">
-          <option value="살균"><option value="출하검사">
-        </datalist>
+        <select id="filter-work-type">
+          <option value="">전체</option>
+          <optgroup label="서울공장 (자동차)">
+            <option value="용접">용접</option>
+            <option value="도장">도장</option>
+            <option value="조립">조립</option>
+            <option value="품질검사">품질검사</option>
+            <option value="부품이송">부품이송</option>
+          </optgroup>
+          <optgroup label="부산공장 (반도체)">
+            <option value="웨이퍼절삭">웨이퍼절삭</option>
+            <option value="노광">노광</option>
+            <option value="식각">식각</option>
+            <option value="세정">세정</option>
+            <option value="검사">검사</option>
+          </optgroup>
+          <optgroup label="인천공장 (식품)">
+            <option value="원료투입">원료투입</option>
+            <option value="가공">가공</option>
+            <option value="포장">포장</option>
+            <option value="살균">살균</option>
+            <option value="출하검사">출하검사</option>
+          </optgroup>
+        </select>
       </label>
       <label>
         작업 주체:

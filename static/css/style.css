@@ -70,9 +70,11 @@ h2 {
   margin-bottom: 12px;
 }
 
-/* 검색 폼 (워크로그/로봇 목록 공통) — 필터 개수가 늘어나서 grid로 감쌈 */
+/* 검색 폼 (워크로그/로봇 목록/에러 현황 공통) — 필터 개수가 늘어나서 grid로 감쌈 */
 #search-form,
-#robot-search-form {
+#robot-search-form,
+#robot-error-search-form,
+#line-error-search-form {
   background-color: white;
   padding: 14px 18px;
   border-radius: 8px;
@@ -88,7 +90,9 @@ h2 {
 }
 
 #search-form label,
-#robot-search-form label {
+#robot-search-form label,
+#robot-error-search-form label,
+#line-error-search-form label {
   font-size: 13px;
   display: flex;
   flex-direction: column;
@@ -98,7 +102,11 @@ h2 {
 #search-form input,
 #search-form select,
 #robot-search-form input,
-#robot-search-form select {
+#robot-search-form select,
+#robot-error-search-form input,
+#robot-error-search-form select,
+#line-error-search-form input,
+#line-error-search-form select {
   padding: 6px 8px;
   border: 1px solid #d9dde3;
   border-radius: 4px;
@@ -117,7 +125,8 @@ h2 {
   margin-bottom: 0;
 }
 
-#page-indicator {
+#page-indicator,
+.page-indicator {
   font-size: 13px;
   color: #666;
 }
@@ -300,4 +309,96 @@ tr:hover:not(.row-alert) {
   text-align: center;
   color: #999;
   font-size: 13px;
+}
+/* =============================================================================
+   로그인 페이지 (10단계 — 로그인/권한)
+   ============================================================================= */
+
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 0;
+}
+
+.login-card {
+  background-color: white;
+  padding: 36px 32px;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  width: 320px;
+}
+
+.login-title {
+  font-size: 20px;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.login-subtitle {
+  font-size: 13px;
+  color: #888;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-form label {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.login-form input {
+  padding: 9px 10px;
+  border: 1px solid #d9dde3;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.login-form button {
+  margin-top: 4px;
+  margin-bottom: 0;
+  width: 100%;
+}
+
+.login-error {
+  font-size: 13px;
+  color: #b91c1c;
+  background-color: #fde8e8;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+/* 로그인 후 nav 오른쪽에 표시되는 "OOO 반장님" + 로그아웃 버튼 */
+.admin-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #444;
+}
+
+.logout-form {
+  margin: 0;
+}
+
+.logout-form button {
+  padding: 6px 10px;
+  margin-bottom: 0;
+  font-size: 12px;
+  background-color: white;
+  color: #444;
+  border: 1px solid #d9dde3;
+}
+
+.logout-form button:hover {
+  background-color: #eef1f6;
 }

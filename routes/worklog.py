@@ -9,6 +9,7 @@
 
 from flask import Blueprint, jsonify, request
 from service import worklog_service
+from auth import login_required, get_current_admin, apply_scope   # 10단계
 
 worklog_bp = Blueprint('worklog', __name__)
 
@@ -163,6 +164,7 @@ def get_worklogs_with_details():
 # 여러 조건을 조합해서 작업 로그 검색 (통합 검색 API)
 # -----------------------------------------------------------------------------
 @worklog_bp.route('/worklogs/search')
+@login_required
 def search_worklogs():
     """
     로봇 / 라인 / 작업유형 / 작업주체 / 날짜범위 / 최소작업시간을
@@ -174,21 +176,25 @@ def search_worklogs():
     - 응답 형태: {"data": [...], "page": 1, "per_page": 50,
                  "total_count": 3241, "total_pages": 65}
       (/worklogs/robot/<id>, /worklogs/date와 동일한 페이지네이션 형태)
+
+    [10단계 — 권한 스코프]
+      robots/search와 동일하게, 로그인한 관리자의 role에 따라
+      line_id/factory_id를 서버가 강제로 덮어쓴다 (apply_scope).
     """
-    robot_id = request.args.get('robot_id', type=int)
-    line_id = request.args.get('line_id', type=int)
-    factory_id = request.args.get('factory_id', type=int)
-    work_type = request.args.get('work_type')
-    worker_type = request.args.get('worker_type')
-    start_date = request.args.get('start')
-    end_date = request.args.get('end')
-    min_minutes = request.args.get('min_minutes', type=int)
+    filters = {
+        'robot_id': request.args.get('robot_id', type=int),
+        'line_id': request.args.get('line_id', type=int),
+        'factory_id': request.args.get('factory_id', type=int),
+        'work_type': request.args.get('work_type'),
+        'worker_type': request.args.get('worker_type'),
+        'start_date': request.args.get('start'),
+        'end_date': request.args.get('end'),
+        'min_minutes': request.args.get('min_minutes', type=int),
+    }
+    apply_scope(get_current_admin(), filters)
+
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
 
-    result = worklog_service.search_worklogs(
-        robot_id=robot_id, line_id=line_id, factory_id=factory_id, work_type=work_type,
-        worker_type=worker_type, start_date=start_date, end_date=end_date,
-        min_minutes=min_minutes, page=page, per_page=per_page,
-    )
+    result = worklog_service.search_worklogs(page=page, per_page=per_page, **filters)
     return jsonify(result)

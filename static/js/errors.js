@@ -1,18 +1,22 @@
 /*
   errors.js
   ──────────────────────────────────────────────────────────
-  역할: errors.html 안의 두 섹션을 채운다.
-    1. 로봇별 에러 통계  → GET /api/errors/stats/robot
-    2. 미해결 에러 목록  → GET /api/errors/unresolved
+  역할: errors.html 안의 세 섹션을 채운다.
+    1. 로봇별 에러 통계     → GET /api/errors/stats/robot        (필터 없음)
+    2. 로봇 에러 통합검색   → GET /api/errors/robot/search        (필터+페이지네이션)
+    3. 라인 에러 검색       → GET /api/errors/line/search         (필터+페이지네이션, 신규)
 
-  main.js와 구조는 완전히 동일한 패턴이다.
-  (fetch → response.json() → 화면에 그리기)
-  API가 2개라서 함수도 2세트로 나눠져 있을 뿐, 원리는 같다.
+  섹션 2/3은 main.js(/api/robots/search) · worklogs.js(/api/worklogs/search)와
+  완전히 동일한 패턴을 쓴다:
+    currentFilters(상태 기억) → fetchX()가 API 호출 → 응답의
+    {data, page, per_page, total_count, total_pages}를 표 + 페이지네이션에 반영.
+  섹션이 2개로 늘었을 뿐이라, 변수/함수 이름 앞에 각각 robotError / lineError
+  접두어를 붙여서 서로 상태가 섞이지 않게 분리했다.
 */
 
 
 // =============================================================
-// 섹션 1. 로봇별 에러 통계
+// 섹션 1. 로봇별 에러 통계 (기존과 동일 — 필터가 필요 없는 집계 데이터)
 // =============================================================
 
 /**
@@ -54,7 +58,6 @@ function renderStatsTable(stats) {
     return;
   }
 
-  // total_count 기준 내림차순 정렬 (원본 배열을 바꾸지 않도록 slice()로 복사 후 정렬)
   const sorted = stats.slice().sort(function (a, b) {
     return b.total_count - a.total_count;
   });
@@ -62,7 +65,6 @@ function renderStatsTable(stats) {
   sorted.forEach(function (stat) {
     const row = document.createElement('tr');
 
-    // 에러가 5건 넘게 쌓인 로봇은 눈에 띄게 강조 (기준값은 임의로 정함, 필요시 조정)
     if (stat.total_count >= 5) {
       row.classList.add('row-alert');
     }
@@ -77,52 +79,127 @@ function renderStatsTable(stats) {
 
 
 // =============================================================
-// 섹션 2. 미해결 에러 목록
+// 섹션 2. 로봇 에러 통합검색
 // =============================================================
 
-/**
- * /api/errors/unresolved를 호출해서 미해결 에러 테이블을 채운다.
- * "새로고침" 버튼에서도 이 함수를 다시 호출한다.
- */
-function loadUnresolvedErrors() {
-  const statusMessage = document.getElementById('unresolved-status-message');
-  statusMessage.textContent = '미해결 에러를 불러오는 중...';
+let robotErrorFilters = {};
+let robotErrorPage = 1;
+let robotErrorTotalPages = 1;
 
-  fetch('/api/errors/unresolved')
+document.getElementById('robot-error-search-form').addEventListener('submit', function (event) {
+  event.preventDefault();   // 페이지 새로고침 방지
+  robotErrorPage = 1;       // 새로 검색하면 항상 1페이지부터
+  searchRobotErrors();
+});
+
+document.getElementById('robot-error-prev-btn').addEventListener('click', function () {
+  if (robotErrorPage > 1) {
+    robotErrorPage -= 1;
+    fetchRobotErrors();
+  }
+});
+
+document.getElementById('robot-error-next-btn').addEventListener('click', function () {
+  if (robotErrorPage < robotErrorTotalPages) {
+    robotErrorPage += 1;
+    fetchRobotErrors();
+  }
+});
+
+
+/**
+ * 폼에 입력된 필터 조건들을 모아서 robotErrorFilters에 저장하고 조회를 시작한다.
+ * RobotError는 500건뿐이라 조건이 하나도 없어도(=전체 조회) 막지 않는다.
+ */
+function searchRobotErrors() {
+  robotErrorFilters = {
+    robot_id: document.getElementById('re-filter-robot-id').value,
+    line_id: document.getElementById('re-filter-line-id').value,
+    error_type: document.getElementById('re-filter-error-type').value,
+    status: document.getElementById('re-filter-status').value,
+    start: document.getElementById('re-start-date').value,
+    end: document.getElementById('re-end-date').value,
+  };
+  fetchRobotErrors();
+}
+
+
+/**
+ * robotErrorFilters / robotErrorPage 기준으로 실제 API를 호출한다.
+ * "검색" 버튼과 "이전/다음" 버튼이 공통으로 이 함수를 호출한다.
+ */
+function fetchRobotErrors() {
+  const statusMessage = document.getElementById('robot-error-status-message');
+  statusMessage.textContent = '로봇 에러를 불러오는 중...';
+
+  const params = new URLSearchParams();
+  Object.entries(robotErrorFilters).forEach(function ([key, value]) {
+    if (value !== '') params.append(key, value);
+  });
+  params.append('page', robotErrorPage);
+
+  fetch('/api/errors/robot/search?' + params.toString())
     .then(function (response) {
       if (!response.ok) {
         throw new Error('서버 응답 오류: ' + response.status);
       }
       return response.json();
     })
-    .then(function (data) {
-      statusMessage.textContent = '미해결 에러 ' + data.length + '건 (마지막 갱신: ' + new Date().toLocaleTimeString() + ')';
-      renderUnresolvedTable(data);
+    .then(function (result) {
+      robotErrorPage = result.page;
+      robotErrorTotalPages = result.total_pages;
+
+      statusMessage.textContent = '조건에 맞는 로봇 에러 총 ' + result.total_count
+        + '건 중 ' + result.data.length + '건 표시 (마지막 갱신: '
+        + new Date().toLocaleTimeString() + ')';
+
+      renderRobotErrorTable(result.data);
+      updateRobotErrorPaginationControls();
     })
     .catch(function (error) {
-      console.error('미해결 에러 조회 실패:', error);
-      statusMessage.textContent = '미해결 에러를 불러오지 못했습니다. (' + error.message + ')';
+      console.error('로봇 에러 조회 실패:', error);
+      statusMessage.textContent = '로봇 에러를 불러오지 못했습니다. (' + error.message + ')';
     });
 }
 
+
 /**
- * 미해결 에러 배열을 unresolved-table-body에 <tr>로 그린다.
- * error_service.py에서 is_pending 플래그가 이미 붙어서 오지만,
- * 이 API 특성상(status='pending'만 조회) 전부 true이므로
- * 모든 행을 동일하게 강조 표시한다.
+ * "이전/다음" 버튼과 "N / 전체M 페이지" 표시를 현재 상태에 맞게 갱신한다.
  */
-function renderUnresolvedTable(errors) {
-  const tableBody = document.getElementById('unresolved-table-body');
+function updateRobotErrorPaginationControls() {
+  const controls = document.getElementById('robot-error-pagination-controls');
+  const indicator = document.getElementById('robot-error-page-indicator');
+  const prevBtn = document.getElementById('robot-error-prev-btn');
+  const nextBtn = document.getElementById('robot-error-next-btn');
+
+  if (robotErrorTotalPages <= 1) {
+    controls.style.display = 'none';
+    return;
+  }
+
+  controls.style.display = '';
+  indicator.textContent = robotErrorPage + ' / ' + robotErrorTotalPages + ' 페이지';
+  prevBtn.disabled = (robotErrorPage <= 1);
+  nextBtn.disabled = (robotErrorPage >= robotErrorTotalPages);
+}
+
+
+/**
+ * 로봇 에러 배열을 robot-error-table-body에 <tr>로 그린다.
+ * is_pending은 service 계층에서 계산되어 옴 (status === '미처리').
+ */
+function renderRobotErrorTable(errors) {
+  const tableBody = document.getElementById('robot-error-table-body');
   tableBody.innerHTML = '';
 
   if (errors.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="5">미해결 에러가 없습니다. 👍</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="5">조건에 맞는 로봇 에러가 없습니다.</td></tr>';
     return;
   }
 
   errors.forEach(function (error) {
     const row = document.createElement('tr');
-    row.classList.add('row-alert');   // 전부 미해결이므로 전체 강조
+    if (error.is_pending) row.classList.add('row-alert');
 
     row.innerHTML =
       '<td>' + error.error_id + '</td>' +
@@ -137,7 +214,140 @@ function renderUnresolvedTable(errors) {
 
 
 // =============================================================
-// 페이지 로드 시 두 섹션 모두 자동 실행
+// 섹션 3. 라인 에러 검색 (신규 — 섹션 2와 완전히 같은 패턴)
+// =============================================================
+
+let lineErrorFilters = {};
+let lineErrorPage = 1;
+let lineErrorTotalPages = 1;
+
+document.getElementById('line-error-search-form').addEventListener('submit', function (event) {
+  event.preventDefault();
+  lineErrorPage = 1;
+  searchLineErrors();
+});
+
+document.getElementById('line-error-prev-btn').addEventListener('click', function () {
+  if (lineErrorPage > 1) {
+    lineErrorPage -= 1;
+    fetchLineErrors();
+  }
+});
+
+document.getElementById('line-error-next-btn').addEventListener('click', function () {
+  if (lineErrorPage < lineErrorTotalPages) {
+    lineErrorPage += 1;
+    fetchLineErrors();
+  }
+});
+
+
+/**
+ * 폼에 입력된 필터 조건들을 모아서 lineErrorFilters에 저장하고 조회를 시작한다.
+ * LineError는 150건뿐이라 조건이 하나도 없어도(=전체 조회) 막지 않는다.
+ */
+function searchLineErrors() {
+  lineErrorFilters = {
+    line_id: document.getElementById('le-filter-line-id').value,
+    factory_id: document.getElementById('le-filter-factory-id').value,
+    error_type: document.getElementById('le-filter-error-type').value,
+    status: document.getElementById('le-filter-status').value,
+    start: document.getElementById('le-start-date').value,
+    end: document.getElementById('le-end-date').value,
+  };
+  fetchLineErrors();
+}
+
+
+/**
+ * lineErrorFilters / lineErrorPage 기준으로 실제 API를 호출한다.
+ */
+function fetchLineErrors() {
+  const statusMessage = document.getElementById('line-error-status-message');
+  statusMessage.textContent = '라인 에러를 불러오는 중...';
+
+  const params = new URLSearchParams();
+  Object.entries(lineErrorFilters).forEach(function ([key, value]) {
+    if (value !== '') params.append(key, value);
+  });
+  params.append('page', lineErrorPage);
+
+  fetch('/api/errors/line/search?' + params.toString())
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error('서버 응답 오류: ' + response.status);
+      }
+      return response.json();
+    })
+    .then(function (result) {
+      lineErrorPage = result.page;
+      lineErrorTotalPages = result.total_pages;
+
+      statusMessage.textContent = '조건에 맞는 라인 에러 총 ' + result.total_count
+        + '건 중 ' + result.data.length + '건 표시 (마지막 갱신: '
+        + new Date().toLocaleTimeString() + ')';
+
+      renderLineErrorTable(result.data);
+      updateLineErrorPaginationControls();
+    })
+    .catch(function (error) {
+      console.error('라인 에러 조회 실패:', error);
+      statusMessage.textContent = '라인 에러를 불러오지 못했습니다. (' + error.message + ')';
+    });
+}
+
+
+function updateLineErrorPaginationControls() {
+  const controls = document.getElementById('line-error-pagination-controls');
+  const indicator = document.getElementById('line-error-page-indicator');
+  const prevBtn = document.getElementById('line-error-prev-btn');
+  const nextBtn = document.getElementById('line-error-next-btn');
+
+  if (lineErrorTotalPages <= 1) {
+    controls.style.display = 'none';
+    return;
+  }
+
+  controls.style.display = '';
+  indicator.textContent = lineErrorPage + ' / ' + lineErrorTotalPages + ' 페이지';
+  prevBtn.disabled = (lineErrorPage <= 1);
+  nextBtn.disabled = (lineErrorPage >= lineErrorTotalPages);
+}
+
+
+/**
+ * 라인 에러 배열을 line-error-table-body에 <tr>로 그린다.
+ */
+function renderLineErrorTable(errors) {
+  const tableBody = document.getElementById('line-error-table-body');
+  tableBody.innerHTML = '';
+
+  if (errors.length === 0) {
+    tableBody.innerHTML = '<tr><td colspan="5">조건에 맞는 라인 에러가 없습니다.</td></tr>';
+    return;
+  }
+
+  errors.forEach(function (error) {
+    const row = document.createElement('tr');
+    if (error.is_pending) row.classList.add('row-alert');
+
+    row.innerHTML =
+      '<td>' + error.error_id + '</td>' +
+      '<td>' + error.line_id + '</td>' +
+      '<td>' + error.error_type + '</td>' +
+      '<td>' + error.status + '</td>' +
+      '<td>' + error.occurred_at + '</td>';
+
+    tableBody.appendChild(row);
+  });
+}
+
+
+// =============================================================
+// 페이지 로드 시 세 섹션 모두 자동 실행
+// (RobotError 500건 / LineError 150건 — worklogs와 달리 소량이라
+//  조건 없는 최초 조회도 안전함, robots 페이지와 동일한 이유)
 // =============================================================
 loadErrorStats();
-loadUnresolvedErrors();
+searchRobotErrors();
+searchLineErrors();

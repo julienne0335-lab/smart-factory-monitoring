@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 
 from service import error_service
 from service import claude_service
+from auth import login_required, get_current_admin, apply_scope   # 10단계
 
 error_bp = Blueprint('error', __name__)
 
@@ -266,3 +267,80 @@ def get_analysis_history():
     n = request.args.get('n', 10, type=int)
     history = claude_service.get_analysis_history(n)
     return jsonify(history)
+
+
+# =============================================================================
+# 통합 검색 (9단계 신규 — 로봇/워크로그 페이지와 동일한 패턴)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GET /errors/robot/search?robot_id=&line_id=&error_type=&status=&start=&end=&page=&per_page=
+# 여러 조건을 조합해서 로봇 에러 검색 (통합 검색 API)
+# -----------------------------------------------------------------------------
+@error_bp.route('/errors/robot/search')
+@login_required
+def search_robot_errors():
+    """
+    로봇ID / 라인 / 공장 / 에러유형 / 상태 / 발생일 범위를 조합해서 로봇 에러를 검색한다.
+    - 예: /errors/robot/search?line_id=2&status=미처리
+    - 예: /errors/robot/search?error_type=센서이상&start=2026-01-01&end=2026-01-07
+    - 예: /errors/robot/search?factory_id=1
+    - 응답 형태: {"data": [...], "page": 1, "per_page": 20,
+                 "total_count": 42, "total_pages": 3}
+      (robots/search, worklogs/search와 동일한 페이지네이션 응답 형태)
+
+    [10단계 — 권한 스코프]
+      robots/search와 동일하게, 로그인한 관리자의 role에 따라
+      line_id/factory_id를 서버가 강제로 덮어쓴다 (apply_scope).
+    """
+    filters = {
+        'robot_id': request.args.get('robot_id', type=int),
+        'line_id': request.args.get('line_id', type=int),
+        'factory_id': request.args.get('factory_id', type=int),
+        'error_type': request.args.get('error_type'),
+        'status': request.args.get('status'),
+        'start_date': request.args.get('start'),
+        'end_date': request.args.get('end'),
+    }
+    apply_scope(get_current_admin(), filters)
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    result = error_service.search_robot_errors(page=page, per_page=per_page, **filters)
+    return jsonify(result)
+
+
+# -----------------------------------------------------------------------------
+# GET /errors/line/search?line_id=&factory_id=&error_type=&status=&start=&end=&page=&per_page=
+# 여러 조건을 조합해서 라인 에러 검색 (통합 검색 API)
+# -----------------------------------------------------------------------------
+@error_bp.route('/errors/line/search')
+@login_required
+def search_line_errors():
+    """
+    라인ID / 공장 / 에러유형 / 상태 / 발생일 범위를 조합해서 라인 에러를 검색한다.
+    - 예: /errors/line/search?factory_id=1&status=미처리
+    - 예: /errors/line/search?line_id=2&error_type=설비고장
+    - 응답 형태: {"data": [...], "page": 1, "per_page": 20,
+                 "total_count": 12, "total_pages": 1}
+
+    [10단계 — 권한 스코프]
+      robots/search와 동일하게, 로그인한 관리자의 role에 따라
+      line_id/factory_id를 서버가 강제로 덮어쓴다 (apply_scope).
+    """
+    filters = {
+        'line_id': request.args.get('line_id', type=int),
+        'factory_id': request.args.get('factory_id', type=int),
+        'error_type': request.args.get('error_type'),
+        'status': request.args.get('status'),
+        'start_date': request.args.get('start'),
+        'end_date': request.args.get('end'),
+    }
+    apply_scope(get_current_admin(), filters)
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+
+    result = error_service.search_line_errors(page=page, per_page=per_page, **filters)
+    return jsonify(result)

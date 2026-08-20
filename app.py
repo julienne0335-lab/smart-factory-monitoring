@@ -10,17 +10,37 @@
 #   보낼지 결정 → 해당 routes 함수 실행 → service 호출 → dao 호출 → DB
 # =============================================================================
 
+import os
+
 from flask import Flask, render_template
+from dotenv import load_dotenv
+
 from extensions import socketio   # ← 여기서 가져옴
+from auth import login_required   # 10단계: 로그인 확인 데코레이터
 
 from routes.robot import robot_bp
 from routes.worklog import worklog_bp
 from routes.error import error_bp
+from routes.admin import admin_bp   # 10단계: 로그인/로그아웃
+
+load_dotenv()  # db.py에서도 호출하지만, SECRET_KEY는 여기서 바로 써야 해서 한 번 더 호출
+# (load_dotenv()는 몇 번을 불러도 안전함 — .env 파일을 다시 읽어서 os.environ을
+#  갱신할 뿐, 중복 호출 자체가 에러를 내거나 값을 꼬이게 하지 않음)
 
 
 def create_app():
     app = Flask(__name__)
     socketio.init_app(app)
+
+    # -------------------------------------------------------------------
+    # SECRET_KEY (10단계 신규)
+    # - Flask session은 "서명된 쿠키"라서, 이 키로 서명/검증한다.
+    #   이 키를 모르면 클라이언트가 세션 쿠키 내용을 위조할 수 없음.
+    # - .env(로컬) / Render 환경변수(배포)에 SECRET_KEY를 넣어두면 그 값을 씀.
+    #   없으면 개발용 기본값으로 대체하되, 배포 환경에서는 반드시 별도로
+    #   설정해야 함 (기본값은 GitHub에 공개되어 있어 배포용으로 쓰면 안 됨).
+    # -------------------------------------------------------------------
+    app.secret_key = os.environ.get('SECRET_KEY', 'dev-only-change-this-secret-key')
 
     # -------------------------------------------------------------------
     # socket 이벤트 핸들러 등록
@@ -37,16 +57,20 @@ def create_app():
     app.register_blueprint(robot_bp, url_prefix='/api')
     app.register_blueprint(worklog_bp, url_prefix='/api')
     app.register_blueprint(error_bp, url_prefix='/api')
+    app.register_blueprint(admin_bp)   # /login, /logout — prefix 없이 루트에 등록
 
     @app.route('/')
+    @login_required
     def index():
         return render_template('index.html')
 
     @app.route('/errors')
+    @login_required
     def errors_page():
         return render_template('errors.html')
 
     @app.route('/worklogs')
+    @login_required
     def worklogs_page():
         return render_template('worklogs.html')
 

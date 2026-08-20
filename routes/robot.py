@@ -8,6 +8,7 @@
 
 from flask import Blueprint, jsonify, request
 from service import robot_service
+from auth import login_required, get_current_admin, apply_scope   # 10단계
 
 # Blueprint 생성
 # - 'robot'이라는 이름으로 라우트들을 묶어서 관리
@@ -89,6 +90,7 @@ def get_robots_by_status(status):
 # 여러 조건을 조합해서 로봇 검색 (통합 검색 API)
 # -----------------------------------------------------------------------------
 @robot_bp.route('/robots/search')
+@login_required
 def search_robots():
     """
     로봇ID / 라인 / 공장 / 상태 / 배터리 하한 / 마모도 상한을 조합해서 검색한다.
@@ -98,19 +100,25 @@ def search_robots():
     - 응답 형태: {"data": [...], "page": 1, "per_page": 25,
                  "total_count": 42, "total_pages": 2}
       (worklogs.py의 페이지네이션 응답과 형태를 통일함)
+
+    [10단계 — 권한 스코프]
+      로그인한 관리자의 role에 따라 line_id/factory_id를 서버가 강제로
+      덮어쓴다 (apply_scope). 클라이언트가 쿼리 파라미터로 다른 값을
+      보내도 무시되고 본인 스코프로 바뀐다. — 라인 반장은 본인 라인만,
+      공장 반장은 본인 공장만 볼 수 있다.
     """
-    robot_id = request.args.get('robot_id', type=int)
-    line_id = request.args.get('line_id', type=int)
-    factory_id = request.args.get('factory_id', type=int)
-    status = request.args.get('status')
-    max_battery = request.args.get('max_battery', type=int)
-    min_joint_wear = request.args.get('min_joint_wear', type=int)
+    filters = {
+        'robot_id': request.args.get('robot_id', type=int),
+        'line_id': request.args.get('line_id', type=int),
+        'factory_id': request.args.get('factory_id', type=int),
+        'status': request.args.get('status'),
+        'max_battery': request.args.get('max_battery', type=int),
+        'min_joint_wear': request.args.get('min_joint_wear', type=int),
+    }
+    apply_scope(get_current_admin(), filters)
+
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 25, type=int)
 
-    result = robot_service.search_robots(
-        robot_id=robot_id, line_id=line_id, factory_id=factory_id,
-        status=status, max_battery=max_battery, min_joint_wear=min_joint_wear,
-        page=page, per_page=per_page,
-    )
+    result = robot_service.search_robots(page=page, per_page=per_page, **filters)
     return jsonify(result)

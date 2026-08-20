@@ -388,3 +388,226 @@ def get_analyses_by_robot(robot_id, n=10):
         return cursor.fetchall()
     finally:
         conn.close() 
+
+# ── 통합 검색 함수 (로봇 에러) — 여러 필터 조합 + 페이지네이션 ──────────────
+
+def search_robot_errors(robot_id=None, line_id=None, factory_id=None, error_type=None,
+                         status=None, start_date=None, end_date=None, limit=20, offset=0):
+    """
+    여러 조건을 동시에 조합해서 로봇 에러(RobotError)를 페이지 단위로 검색한다.
+    (robot_dao.search_robots() / worklog_dao.search_worklogs()와 동일한 설계:
+     조건절을 동적으로 조립하는 헬퍼를 따로 빼서 search/count가 공유함)
+
+    [파라미터] (전부 선택적 — None/빈값이면 해당 조건은 무시됨)
+      robot_id   (int) : 특정 로봇 하나만
+      line_id    (int) : 특정 라인으로 좁히기 (Robot 테이블과 JOIN 필요)
+      factory_id (int) : 특정 공장으로 좁히기 (Robot+Line 둘 다 JOIN 필요)
+      error_type (str) : '센서이상' / '충돌' / '낙상' / '과부하' / '통신오류'
+      status     (str) : '미처리' / '완료'
+      start_date (str) : 시작 날짜 (end_date와 "함께" 넘겨야 조건이 걸림)
+      end_date   (str) : 종료 날짜
+      limit, offset     : 페이지네이션
+
+    [반환값]
+      list of dict — 조건에 맞는 로봇 에러 목록 (이번 페이지 분량만)
+      전체 건수는 count_search_robot_errors()로 별도 조회
+
+    [참고]
+      line_id/factory_id는 RobotError 테이블에 없는 컬럼이라
+      Robot(→line_id) / Line(→factory_id)과 JOIN해야만 필터링 가능.
+      (RobotError → robot_id → Robot → line_id → Line → factory_id)
+      10단계(관리자 권한) 기준: 공장 반장(factory_id 스코프)이 로봇 에러를
+      볼 때도 필요해서 line_error 검색과 동일하게 factory_id까지 지원함.
+    """
+    where_clause, from_clause, params = _build_robot_error_search_conditions(
+        robot_id, line_id, factory_id, error_type, status, start_date, end_date
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        query = f"""
+            SELECT e.* {from_clause} {where_clause}
+            ORDER BY e.occurred_at DESC
+            LIMIT %s OFFSET %s
+        """
+        cursor.execute(query, params + [limit, offset])
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def count_search_robot_errors(robot_id=None, line_id=None, factory_id=None, error_type=None,
+                               status=None, start_date=None, end_date=None):
+    """search_robot_errors()와 동일한 조건의 전체 건수를 반환한다 (total_pages 계산용)"""
+    where_clause, from_clause, params = _build_robot_error_search_conditions(
+        robot_id, line_id, factory_id, error_type, status, start_date, end_date
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) AS cnt {from_clause} {where_clause}", params)
+        return cursor.fetchone()['cnt']
+    finally:
+        conn.close()
+
+
+def _build_robot_error_search_conditions(robot_id, line_id, factory_id, error_type,
+                                          status, start_date, end_date):
+    """
+    search_robot_errors() / count_search_robot_errors()가 공통으로 쓰는
+    WHERE절 조립 로직. (robot_dao._build_robot_search_conditions()와 동일한 패턴)
+    조건절 문자열 조립 코드가 두 함수에 중복되지 않도록 여기로 뺐다.
+
+    [반환값]
+      (where_clause, from_clause, params) 튜플
+    """
+    conditions = []
+    params = []
+
+    if robot_id is not None:
+        conditions.append("e.robot_id = %s")
+        params.append(robot_id)
+
+    if line_id is not None:
+        conditions.append("r.line_id = %s")
+        params.append(line_id)
+
+    if factory_id is not None:
+        conditions.append("l.factory_id = %s")
+        params.append(factory_id)
+
+    if error_type:
+        conditions.append("e.error_type = %s")
+        params.append(error_type)
+
+    if status:
+        conditions.append("e.status = %s")
+        params.append(status)
+
+    # 날짜는 start/end 둘 다 있을 때만 BETWEEN 조건을 건다
+    if start_date and end_date:
+        conditions.append("e.occurred_at BETWEEN %s AND %s")
+        params.append(start_date)
+        params.append(end_date)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # factory_id가 있으면 Robot+Line 둘 다, line_id만 있으면 Robot만 JOIN.
+    # (factory_id 조건에는 l.factory_id가 필요하므로 Line까지 반드시 필요함)
+    if factory_id is not None:
+        from_clause = (
+            "FROM RobotError e "
+            "JOIN Robot r ON e.robot_id = r.robot_id "
+            "JOIN Line l ON r.line_id = l.line_id"
+        )
+    elif line_id is not None:
+        from_clause = "FROM RobotError e JOIN Robot r ON e.robot_id = r.robot_id"
+    else:
+        from_clause = "FROM RobotError e"
+
+    return where_clause, from_clause, params
+
+
+# ── 통합 검색 함수 (라인 에러) — 여러 필터 조합 + 페이지네이션 ──────────────
+
+def search_line_errors(line_id=None, factory_id=None, error_type=None, status=None,
+                        start_date=None, end_date=None, limit=20, offset=0):
+    """
+    여러 조건을 동시에 조합해서 라인 에러(LineError)를 페이지 단위로 검색한다.
+    (search_robot_errors()와 동일한 설계, 대상 테이블만 다름)
+
+    [파라미터] (전부 선택적 — None/빈값이면 해당 조건은 무시됨)
+      line_id    (int) : 특정 라인 하나만
+      factory_id (int) : 특정 공장으로 좁히기 (Line 테이블과 JOIN 필요)
+      error_type (str) : '설비고장' / '전력이상' / '원자재부족' / '안전사고' / '기타'
+      status     (str) : '미처리' / '완료'
+      start_date (str) : 시작 날짜 (end_date와 "함께" 넘겨야 조건이 걸림)
+      end_date   (str) : 종료 날짜
+      limit, offset     : 페이지네이션
+
+    [반환값]
+      list of dict — 조건에 맞는 라인 에러 목록 (이번 페이지 분량만)
+      전체 건수는 count_search_line_errors()로 별도 조회
+
+    [참고]
+      factory_id는 LineError 테이블에 없는 컬럼이라 Line과 JOIN해야만 필터링 가능.
+      (LineError → line_id → Line → factory_id)
+    """
+    where_clause, from_clause, params = _build_line_error_search_conditions(
+        line_id, factory_id, error_type, status, start_date, end_date
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        query = f"""
+            SELECT le.* {from_clause} {where_clause}
+            ORDER BY le.occurred_at DESC
+            LIMIT %s OFFSET %s
+        """
+        cursor.execute(query, params + [limit, offset])
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def count_search_line_errors(line_id=None, factory_id=None, error_type=None, status=None,
+                              start_date=None, end_date=None):
+    """search_line_errors()와 동일한 조건의 전체 건수를 반환한다 (total_pages 계산용)"""
+    where_clause, from_clause, params = _build_line_error_search_conditions(
+        line_id, factory_id, error_type, status, start_date, end_date
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) AS cnt {from_clause} {where_clause}", params)
+        return cursor.fetchone()['cnt']
+    finally:
+        conn.close()
+
+
+def _build_line_error_search_conditions(line_id, factory_id, error_type, status,
+                                         start_date, end_date):
+    """
+    search_line_errors() / count_search_line_errors()가 공통으로 쓰는
+    WHERE절 조립 로직.
+
+    [반환값]
+      (where_clause, from_clause, params) 튜플
+    """
+    conditions = []
+    params = []
+
+    if line_id is not None:
+        conditions.append("le.line_id = %s")
+        params.append(line_id)
+
+    if factory_id is not None:
+        conditions.append("l.factory_id = %s")
+        params.append(factory_id)
+
+    if error_type:
+        conditions.append("le.error_type = %s")
+        params.append(error_type)
+
+    if status:
+        conditions.append("le.status = %s")
+        params.append(status)
+
+    if start_date and end_date:
+        conditions.append("le.occurred_at BETWEEN %s AND %s")
+        params.append(start_date)
+        params.append(end_date)
+
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    # factory_id 필터가 있을 때만 Line과 JOIN
+    if factory_id is not None:
+        from_clause = "FROM LineError le JOIN Line l ON le.line_id = l.line_id"
+    else:
+        from_clause = "FROM LineError le"
+
+    return where_clause, from_clause, params

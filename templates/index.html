@@ -42,6 +42,14 @@
         <ul id="notif-list"></ul>
       </div>
     </div>
+
+    <!-- 10단계: 로그인 정보 표시 + 로그아웃 (session은 Flask가 템플릿에 자동으로 넘겨줌) -->
+    <div class="admin-info">
+      <span>{{ session.admin.name }}님 ({{ '공장 반장' if session.admin.role == '슈퍼' else '라인 반장' }})</span>
+      <form method="POST" action="/logout" class="logout-form">
+        <button type="submit">로그아웃</button>
+      </form>
+    </div>
   </div>
 </nav>
 

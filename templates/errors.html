@@ -30,6 +30,14 @@
         <ul id="notif-list"></ul>
       </div>
     </div>
+
+    <!-- 10단계: 로그인 정보 표시 + 로그아웃 (session은 Flask가 템플릿에 자동으로 넘겨줌) -->
+    <div class="admin-info">
+      <span>{{ session.admin.name }}님 ({{ '공장 반장' if session.admin.role == '슈퍼' else '라인 반장' }})</span>
+      <form method="POST" action="/logout" class="logout-form">
+        <button type="submit">로그아웃</button>
+      </form>
+    </div>
   </div>
 </nav>
 
@@ -58,16 +66,58 @@
   <hr class="section-divider">
 
   <!-- ===================================================================
-       섹션 2. 미해결 에러 목록
-       - GET /api/errors/unresolved 결과를 표로 보여준다.
-       - status가 'pending'(미해결)인 에러만 내려오는 API라서
-         is_pending 값은 항상 true로 옴 (그래도 화면에서 표시는 해줌)
+       섹션 2. 로봇 에러 통합검색
+       - GET /api/errors/robot/search 를 호출한다.
+       - 로봇ID/라인ID/에러유형/상태/발생일 범위를 자유롭게 조합해서 검색.
+       - 상태 기본값을 "미처리"로 둬서, 예전 "미해결 에러 목록"과 같은
+         화면으로 시작하되 "전체"로 바꾸면 완료 건도 볼 수 있게 확장함.
        =================================================================== -->
-  <h2>미해결 에러 목록</h2>
-  <button onclick="loadUnresolvedErrors()">새로고침</button>
-  <p id="unresolved-status-message" class="status-message"></p>
+  <h2>🤖 로봇 에러 통합검색</h2>
 
-  <table id="unresolved-table">
+  <form id="robot-error-search-form">
+    <div class="filter-grid">
+      <label>
+        로봇 ID:
+        <input type="number" id="re-filter-robot-id" placeholder="예: 5" min="1">
+      </label>
+      <label>
+        라인 ID:
+        <input type="number" id="re-filter-line-id" placeholder="예: 2" min="1">
+      </label>
+      <label>
+        에러 유형:
+        <select id="re-filter-error-type">
+          <option value="">전체</option>
+          <option value="센서이상">센서이상</option>
+          <option value="충돌">충돌</option>
+          <option value="낙상">낙상</option>
+          <option value="과부하">과부하</option>
+          <option value="통신오류">통신오류</option>
+        </select>
+      </label>
+      <label>
+        상태:
+        <select id="re-filter-status">
+          <option value="">전체</option>
+          <option value="미처리" selected>미처리</option>
+          <option value="완료">완료</option>
+        </select>
+      </label>
+      <label>
+        시작일:
+        <input type="date" id="re-start-date">
+      </label>
+      <label>
+        종료일:
+        <input type="date" id="re-end-date">
+      </label>
+    </div>
+    <button type="submit">검색</button>
+  </form>
+
+  <p id="robot-error-status-message" class="status-message"></p>
+
+  <table id="robot-error-table">
     <thead>
       <tr>
         <th>에러 ID</th>
@@ -77,10 +127,96 @@
         <th>발생 시각</th>
       </tr>
     </thead>
-    <tbody id="unresolved-table-body">
+    <tbody id="robot-error-table-body">
       <!-- errors.js가 여기에 <tr>을 채워 넣음 -->
     </tbody>
   </table>
+
+  <div id="robot-error-pagination-controls" class="pagination-controls" style="display: none;">
+    <button id="robot-error-prev-btn" type="button">← 이전</button>
+    <span id="robot-error-page-indicator" class="page-indicator"></span>
+    <button id="robot-error-next-btn" type="button">다음 →</button>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- ===================================================================
+       섹션 3. 라인 에러 검색 (신규)
+       - GET /api/errors/line/search 를 호출한다.
+       - 지금까지 라인 에러는 화면이 아예 없었음(API만 존재) — 신규로 추가.
+       - 라인ID/공장/에러유형/상태/발생일 범위를 조합해서 검색.
+       - 상태 기본값은 "전체" (기존 화면이 없었으므로 보존할 기본값도 없음).
+       =================================================================== -->
+  <h2>🏭 라인 에러 검색</h2>
+
+  <form id="line-error-search-form">
+    <div class="filter-grid">
+      <label>
+        라인 ID:
+        <input type="number" id="le-filter-line-id" placeholder="예: 2" min="1">
+      </label>
+      <label>
+        공장:
+        <select id="le-filter-factory-id">
+          <option value="">전체</option>
+          <option value="1">서울공장</option>
+          <option value="2">부산공장</option>
+          <option value="3">인천공장</option>
+        </select>
+      </label>
+      <label>
+        에러 유형:
+        <select id="le-filter-error-type">
+          <option value="">전체</option>
+          <option value="설비고장">설비고장</option>
+          <option value="전력이상">전력이상</option>
+          <option value="원자재부족">원자재부족</option>
+          <option value="안전사고">안전사고</option>
+          <option value="기타">기타</option>
+        </select>
+      </label>
+      <label>
+        상태:
+        <select id="le-filter-status">
+          <option value="">전체</option>
+          <option value="미처리">미처리</option>
+          <option value="완료">완료</option>
+        </select>
+      </label>
+      <label>
+        시작일:
+        <input type="date" id="le-start-date">
+      </label>
+      <label>
+        종료일:
+        <input type="date" id="le-end-date">
+      </label>
+    </div>
+    <button type="submit">검색</button>
+  </form>
+
+  <p id="line-error-status-message" class="status-message"></p>
+
+  <table id="line-error-table">
+    <thead>
+      <tr>
+        <th>에러 ID</th>
+        <th>라인 ID</th>
+        <th>에러 유형</th>
+        <th>상태</th>
+        <th>발생 시각</th>
+      </tr>
+    </thead>
+    <tbody id="line-error-table-body">
+      <!-- errors.js가 여기에 <tr>을 채워 넣음 -->
+    </tbody>
+  </table>
+
+  <div id="line-error-pagination-controls" class="pagination-controls" style="display: none;">
+    <button id="line-error-prev-btn" type="button">← 이전</button>
+    <span id="line-error-page-indicator" class="page-indicator"></span>
+    <button id="line-error-next-btn" type="button">다음 →</button>
+  </div>
 
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <script src="/static/js/realtime.js"></script>  

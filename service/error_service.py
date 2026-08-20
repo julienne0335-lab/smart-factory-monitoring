@@ -5,6 +5,8 @@
 # - routes 계층에서 이 service를 호출함
 # =============================================================================
 
+import math
+
 from dao import error_dao
 from extensions import socketio   # from app import socketio → 이걸로 교체
 
@@ -131,3 +133,77 @@ def create_robot_error(robot_id, error_type, detail=None):
     }, room=f"factory_{factory_id}")
 
     return error_id 
+
+# -----------------------------------------------------------------------------
+# 페이지네이션 공통 헬퍼
+# - robot_service.py / worklog_service.py의 _paginate()와 동일한 응답 형태로 통일함
+#   (프론트에서 로봇/워크로그/에러 페이지네이션 처리 코드를 똑같은 패턴으로 짤 수 있게)
+# -----------------------------------------------------------------------------
+
+def _paginate(data, page, per_page, total_count):
+    """
+    페이지네이션 응답 형태로 감싸는 공통 헬퍼.
+    data 배열만 반환하던 걸 { data, page, per_page, total_count, total_pages }
+    형태의 객체로 감싸서, 프론트가 "지금 몇 페이지/전체 몇 페이지"를 알 수 있게 함.
+    """
+    total_pages = math.ceil(total_count / per_page) if per_page else 1
+    return {
+        "data": data,
+        "page": page,
+        "per_page": per_page,
+        "total_count": total_count,
+        "total_pages": total_pages,
+    }
+
+
+# -----------------------------------------------------------------------------
+# 통합 검색 함수 (로봇 에러 / 라인 에러)
+# -----------------------------------------------------------------------------
+
+def search_robot_errors(robot_id=None, line_id=None, factory_id=None, error_type=None,
+                         status=None, start_date=None, end_date=None, page=1, per_page=20):
+    """
+    여러 조건을 조합해서 로봇 에러를 검색 + is_pending 플래그 + 페이지네이션 정보까지 포함해서 반환.
+
+    - 예: search_robot_errors(line_id=2, status='미처리')
+    - 예: search_robot_errors(error_type='센서이상', start_date='2026-01-01', end_date='2026-01-07')
+    - 예: search_robot_errors(factory_id=1)  ← 10단계: 공장 반장 스코프 적용 시 사용
+    """
+    offset = (page - 1) * per_page
+
+    total_count = error_dao.count_search_robot_errors(
+        robot_id=robot_id, line_id=line_id, factory_id=factory_id, error_type=error_type,
+        status=status, start_date=start_date, end_date=end_date,
+    )
+    errors = error_dao.search_robot_errors(
+        robot_id=robot_id, line_id=line_id, factory_id=factory_id, error_type=error_type,
+        status=status, start_date=start_date, end_date=end_date,
+        limit=per_page, offset=offset,
+    )
+    errors = [_add_pending_flag(e) for e in errors]
+
+    return _paginate(errors, page, per_page, total_count)
+
+
+def search_line_errors(line_id=None, factory_id=None, error_type=None, status=None,
+                        start_date=None, end_date=None, page=1, per_page=20):
+    """
+    여러 조건을 조합해서 라인 에러를 검색 + is_pending 플래그 + 페이지네이션 정보까지 포함해서 반환.
+
+    - 예: search_line_errors(factory_id=1, status='미처리')
+    - 예: search_line_errors(line_id=2, error_type='설비고장')
+    """
+    offset = (page - 1) * per_page
+
+    total_count = error_dao.count_search_line_errors(
+        line_id=line_id, factory_id=factory_id, error_type=error_type,
+        status=status, start_date=start_date, end_date=end_date,
+    )
+    errors = error_dao.search_line_errors(
+        line_id=line_id, factory_id=factory_id, error_type=error_type,
+        status=status, start_date=start_date, end_date=end_date,
+        limit=per_page, offset=offset,
+    )
+    errors = [_add_pending_flag(e) for e in errors]
+
+    return _paginate(errors, page, per_page, total_count)
