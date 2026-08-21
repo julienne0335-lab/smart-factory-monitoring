@@ -15,6 +15,8 @@
 - 작업 이력(WorkLog) 기반 통계 — 로봇별/라인별/작업유형별 평균 작업시간, 에너지 비용
 - 다중 필터 통합 검색 API + 페이지네이션 (로봇/작업이력/에러 전체)
 - 세션 기반 로그인, 역할(공장장/라인 반장)별 서버 강제 데이터 스코핑
+- (확장) MQTT 가상 센서 시뮬레이터 → 백엔드 실시간 반영 파이프라인 — 하드웨어 없이
+  로컬에서 IoT 수집 계층 아키텍처를 검증 (로컬 전용, 자세한 내용은 아래 참고)
 
 ## 기술 스택
 
@@ -54,8 +56,24 @@ mysql -u root -p smart_factory < sql/trigger_setup.sql
 python app.py   # http://localhost:5000
 ```
 
+### (선택) MQTT 센서 시뮬레이터 실행
+
+75대 로봇의 배터리·관절마모 값을 실시간으로 흘려보내는 가상 센서 파이프라인입니다.
+Mosquitto 브로커가 필요합니다(winget으로 설치하면 Windows 서비스로 자동 실행됨 —
+`mosquitto/mosquitto.conf`에 브로커가 없을 때 수동 실행하는 방법도 적어뒀습니다).
+
+```bash
+# 1) python app.py로 백엔드를 먼저 띄워두면(위 단계) mqtt_bridge.py가 자동으로 구독을 시작함
+# 2) 별도 터미널에서 시뮬레이터 실행
+python scripts/mqtt_sensor_simulator.py
+```
+
+배터리가 `warning_threshold`(기본 20) 아래로 떨어지면 `battery_status_update`
+트리거가 로봇 상태를 자동으로 `충전중`으로 바꾸고, `robot_sensor_update` 소켓
+이벤트가 해당 공장 room으로 실시간 전파됩니다.
+
 ## 더 자세한 내용
 
 DB 설계 근거(DDL/View/Trigger/Index), Flask 계층 구조, ATM 프로젝트와의 도메인
-대응 설계, 개발하며 겪은 버그와 트러블슈팅 기록, 배포 과정까지 전부 정리한
-심화 문서는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)에 있습니다.
+대응 설계, 개발하며 겪은 버그와 트러블슈팅 기록, 배포 과정, 그리고 이번 MQTT
+확장 기록까지 전부 정리한 심화 문서는 [`docs/DEVLOG.md`](docs/DEVLOG.md)에 있습니다.

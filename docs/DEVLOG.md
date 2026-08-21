@@ -661,3 +661,160 @@ git push
 - [ ] (선택) `realtime.js`에 `socket.on('line_error', ...)` 핸들러 추가
 - [ ] (선택) 포트폴리오 문서(`포트폴리오_면접준비_최종본.md`)의 "구현 완료"
       목록에 이번 두 항목 반영
+
+---
+
+## 17. 확장 1 — MQTT 가상 센서 시뮬레이터 (2026-08-22)
+
+포트폴리오 14장은 "진짜 스마트팩토리로 발전시킨다면"이라는 확장 방향을
+설계 수준으로만 정리해두고, 실제로 구현·검증한 기록은 아니라고 스스로
+밝혀둔 장이었습니다. 14.9절 우선순위표에서 난이도가 가장 낮다고 판단한
+1번(가상 센서 시뮬레이터 + MQTT)을 실제로 로컬에서 구현하고 끝까지
+검증한 기록입니다.
+
+### 환경 준비
+
+로컬에 Docker·Mosquitto가 전혀 없는 상태였습니다. winget으로 Eclipse
+Mosquitto(v2.1.2)를 설치했는데, 설치 과정에서 Windows 서비스로 자동
+등록되어 기본 설정 그대로 `localhost:1883`에서 익명 pub/sub을 즉시
+허용한다는 걸 확인했습니다(`mosquitto_pub`/`mosquitto_sub`로 직접
+확인). 그래서 프로젝트 전용 `mosquitto/mosquitto.conf`를 만들어두긴
+했지만(브로커가 서비스로 안 떠 있는 환경을 위한 대비용), 실제 검증은
+이미 떠 있는 Windows 서비스를 그대로 사용했습니다.
+
+### 변경/추가 파일
+
+| 파일 | 내용 |
+|---|---|
+| `mqtt_bridge.py` (신규) | MQTT 구독 클라이언트. `factory/robot/sensor` 토픽을 구독해 `robot_service.apply_sensor_reading()`으로 넘김 |
+| `scripts/mqtt_sensor_simulator.py` (신규) | 로봇 75대의 배터리·관절마모 값을 점진적으로 변화시키며 1초 간격으로 발행하는 가상 센서 |
+| `mosquitto/mosquitto.conf` (신규) | 로컬 브로커를 수동 실행해야 할 때를 위한 프로젝트 전용 설정 |
+| `dao/robot_dao.py` | `update_robot_sensors()`, `get_factory_id_by_robot()` 추가 |
+| `service/robot_service.py` | `apply_sensor_reading()` 추가 (5단계 `error_service.create_robot_error()`와 동일한 "DAO 반영 → 공장 조회 → 그 공장 room에만 emit" 3단계 패턴) |
+| `app.py` | `__main__` 블록에서 reloader 자식 프로세스에만 MQTT 브리지를 시작하도록 연결 |
+| `requirements.txt` | `paho-mqtt` 추가 |
+
+### 동작 방식
+
+```
+scripts/mqtt_sensor_simulator.py (발행자)
+  → MQTT 브로커(Mosquitto, localhost:1883)
+    → mqtt_bridge.py (구독자, app.py 시작 시 백그라운드 스레드로 붙음)
+      → robot_service.apply_sensor_reading(robot_id, battery, wear)
+        ① robot_dao.update_robot_sensors() — Robot.battery_level/joint_wear UPDATE
+           └─ battery_level이 실제로 바뀌면 battery_status_update 트리거가
+              status를 '가동중'/'충전중'으로 자동 재계산 (15.2절에서 버그 수정된 그 트리거)
+        ② robot_dao.get_factory_id_by_robot() — 어느 공장 room으로 보낼지 조회
+        ③ socketio.emit('robot_sensor_update', {...}, room=f"factory_{factory_id}")
+```
+
+시뮬레이터는 로봇별로 배터리 상태를 들고 있다가 매 tick 1~4씩 깎고,
+`warning_threshold`(20) 이하로 떨어지면 80~100으로 "재충전"시키는 방식으로
+값을 만듭니다. 완전 랜덤이 아니라 이렇게 점진적으로 변화시킨 이유는, 배터리가
+실제로 threshold를 넘나들어야 `battery_status_update` 트리거의 상태 전환을
+눈으로 확인할 수 있기 때문입니다.
+
+### 발견한 버그 1 — `python app.py`가 reloader 때문에 두 번 실행되는 문제
+
+`app.py`는 `app = create_app()`을 모듈 최상단(= `if __name__` 가드 **밖**)에서
+실행합니다. `socketio.run(app, debug=True)`가 Werkzeug reloader를 켜면, 이
+reloader는 "감시하는 부모 프로세스"와 "실제로 서빙하는 자식 프로세스"를
+따로 띄우는데, **부모 프로세스도 reloader가 켜지기 전에 이미 `create_app()`을
+한 번 실행한 상태**입니다. `create_app()` 안에서 MQTT 구독을 시작해버리면
+부모·자식 양쪽에서 각각 브로커에 붙어 센서값이 두 번씩 처리될 위험이
+있습니다.
+
+`WERKZEUG_RUN_MAIN` 환경변수만으로는 "reloader 없이 그냥 한 번 실행되는
+경우"와 "reloader의 부모 프로세스(아직 자식을 못 띄운 시점)"를 구분할 수
+없다는 게 까다로운 지점이었습니다(둘 다 이 값이 비어 있음). 그래서
+MQTT 브리지 시작 코드를 `create_app()`에서 빼내 `if __name__ == '__main__':`
+블록 안으로 옮기고, 거기서 `WERKZEUG_RUN_MAIN == 'true'`(reloader 자식)
+이거나 `DEBUG`가 꺼져 있을 때(reloader 자체가 없는 경우)만 시작하도록
+했습니다. 부수 효과로, gunicorn으로 배포하는 환경(Render)에서는
+`__main__` 블록이 아예 안 돌기 때문에 MQTT 브리지가 시작되지 않는데 —
+이건 의도된 동작입니다. 14장 전체가 "로컬에서 아키텍처를 검증한다"는
+틀이었고, Render에는 애초에 로컬 브로커가 없습니다.
+
+### 발견한 버그 2 — "로봇이 존재하지 않는다"는 오판 (rowcount 함정)
+
+가장 값진 발견이었습니다. `update_robot_sensors()`가 `cursor.rowcount > 0`으로
+"이 robot_id가 실제로 존재하는가"를 판단하게 짰는데, 시뮬레이터를 돌리자마자
+`robot_id=13` 근처에서 실제로 존재하는 로봇을 "존재하지 않음"으로 오판하는
+게 재현됐습니다.
+
+원인은 MySQL(PyMySQL)의 `UPDATE` `rowcount` 의미론이었습니다.
+**"조건에 매칭된 행 수"가 아니라 "실제로 값이 바뀐 행 수"** 입니다.
+`battery_level`은 `INT` 컬럼인데 센서가 보내는 값은 float(예: 93.1)라서
+DB에 저장되며 반올림되고, 그 반올림된 값이 우연히 직전 저장값과 같아지는
+순간(예: 92.6 → 93 저장, 다음 tick에 93.4 → 93 저장) `rowcount`가 0이
+되어버립니다. 이 로봇은 멀쩡히 존재하고 값도 정상적으로 반영됐는데도
+"존재하지 않는다"고 오판한 것 — **3.7·6.4·15.2절에서 반복된 "조용히
+실패하는 버그" 계보에 새로 추가된 사례**입니다(패턴은 다르지만 "값이
+바뀌었는지"와 "행이 존재하는지"를 혼동했다는 점에서 근본적으로 같은
+종류의 함정입니다).
+
+수정: `update_robot_sensors()`는 존재 여부를 판단하지 않고 UPDATE만
+수행하도록 단순화하고, `robot_service.apply_sensor_reading()`이 UPDATE
+이후 `get_robot_by_id()`로 다시 조회해서 `None`이면 "존재하지 않음"으로
+판단하도록 바꿨습니다. 3.4절에 이미 있던 "없으면 None" 패턴을 그대로
+재사용한 것이라, 새로운 개념을 도입하지 않고 기존 관례로 되돌아가는 방식으로
+고쳤습니다.
+
+### 발견한 버그 3 — Windows 콘솔 인코딩이 백그라운드 스레드를 죽임
+
+버그 2를 겪는 과정에서 더 심각한 2차 문제를 발견했습니다. "존재하지
+않음" 로그 메시지에 쓴 em dash(`—`, U+2014) 문자를, `python app.py`를
+표준출력을 파일로 리디렉션해 실행했을 때의 기본 인코딩(cp949, 한글
+Windows)이 인코딩하지 못해 `UnicodeEncodeError`가 발생했습니다.
+
+이 예외는 MQTT 콜백(`paho-mqtt`의 백그라운드 네트워크 스레드) 안에서
+발생한 것이라 아무도 잡아주지 않았고, 그 스레드 자체가 죽어버렸습니다.
+겉보기엔 Flask 앱도 멀쩡히 떠 있고 에러 traceback도 로그에 남지만,
+**그 이후로 들어오는 모든 센서값이 조용히 유실**되는 상황이었습니다 —
+버그 2(rowcount 오판)가 없었다면 이 문제는 한참 뒤에나 (실제로 존재하지
+않는 robot_id가 들어왔을 때) 우연히 드러났을 잠재 버그였습니다.
+
+수정: `mqtt_bridge.py`와 `mqtt_sensor_simulator.py` 양쪽 모두 시작 부분에서
+`sys.stdout.reconfigure(encoding="utf-8", errors="replace")`를 호출해,
+콘솔이 표현 못 하는 문자를 만나도 예외 대신 대체 문자로 흘려보내도록
+했습니다. 백그라운드 스레드의 로그 한 줄 때문에 파이프라인 전체가
+말없이 멈추는 것보다는, 문자가 깨져 보이더라도 계속 동작하는 쪽이
+안전하다고 판단했습니다.
+
+### 실제 검증 결과 (2026-08-22, 로컬 환경 기준)
+
+- `mosquitto_pub`/`mosquitto_sub`로 로컬 브로커 익명 pub/sub 직접 확인
+- `python app.py` 실행 → `mqtt_bridge.py`가 정확히 한 번만 구독 시작
+  (Werkzeug reloader로 4번 재시작해봐도 매번 한 번씩만 재구독됨 — 중복 없음)
+- `scripts/mqtt_sensor_simulator.py` 실행 → 로봇 1~12 등 다수의
+  `battery_level`/`joint_wear`가 DB에 실시간 반영됨을 직접 조회로 확인
+- `mosquitto_pub`으로 `robot_id=1`에 `battery_level=15`(threshold 이하)
+  발행 → 이어서 `battery_level=90` 발행 → 최종 조회 결과
+  `{'robot_id': 1, 'battery_level': 90, 'joint_wear': 41, 'status': '가동중'}`
+  으로, `battery_status_update` 트리거가 두 값 모두에 대해 올바르게
+  상태를 재계산했음을 확인
+- `robot_id=9999`(존재하지 않음) 발행 → 예외 없이
+  `[mqtt] robot_id=9999 존재하지 않음 — 무시` 로그만 남기고 다음
+  메시지 계속 처리됨을 확인 (버그 3 수정 검증)
+
+### 알려진 한계
+
+- `robot_sensor_update` socketio 이벤트를 프론트(`realtime.js`, 대시보드)가
+  아직 구독하지 않습니다 — 지금은 DB 반영과 이벤트 발송까지만 검증했고,
+  화면에 실시간으로 배터리 그래프를 그리는 건 이번 범위 밖입니다.
+- `joint_wear`(관절 마모도)는 시뮬레이터에서 계속 누적만 되고 리셋되지
+  않습니다. 실제로는 `Maintenance`(정비 이력) 등록 시 마모도가 초기화돼야
+  하는데, 이번 확장은 그 연결까지는 만들지 않았습니다.
+- 이 파이프라인은 `python app.py`로 로컬 실행할 때만 동작하며, Render
+  배포 환경에는 연결하지 않았습니다(위 "발견한 버그 1" 참고) — 14장이
+  원래 "하드웨어 없이 로컬에서 아키텍처를 검증한다"고 밝힌 범위 그대로입니다.
+
+### Git 커밋
+
+```bash
+git add mqtt_bridge.py scripts/mqtt_sensor_simulator.py mosquitto/ \
+        dao/robot_dao.py service/robot_service.py app.py requirements.txt \
+        README.md docs/DEVLOG.md
+git commit -m "MQTT 가상 센서 시뮬레이터 추가 (14.2절 확장) — battery_status_update 트리거 연동, rowcount 오판/콘솔 인코딩 크래시 버그 수정"
+git push
+```

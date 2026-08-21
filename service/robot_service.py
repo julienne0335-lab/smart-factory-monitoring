@@ -8,6 +8,7 @@
 import math
 
 from dao import robot_dao, worklog_dao
+from extensions import socketio
 
 
 def get_all_robots():
@@ -107,3 +108,52 @@ def search_robots(robot_id=None, line_id=None, factory_id=None, status=None,
         robot['is_alert'] = robot['status'] == '오류정지'
 
     return _paginate(robots, page, per_page, total_count)
+
+
+# -----------------------------------------------------------------------------
+# 14.2절 확장: MQTT 센서 시뮬레이터가 발행한 값을 반영하는 진입점
+# - mqtt_bridge.py의 on_message 콜백이 이 함수를 호출한다.
+# - error_service.create_robot_error()(5단계)와 동일한 3단계 패턴:
+#     ① DAO로 DB 반영  ② 소속 공장 조회  ③ 그 공장 room에만 emit
+# -----------------------------------------------------------------------------
+
+def apply_sensor_reading(robot_id, battery_level, joint_wear):
+    """
+    센서(MQTT) 한 건을 로봇 상태에 반영하고, 소속 공장에 실시간으로 알린다.
+
+    [파라미터]
+      robot_id       (int)   : 센서값을 보낸 로봇
+      battery_level  (float) : 0~100
+      joint_wear     (float) : 0~100
+
+    [반환값]
+      dict | None: 갱신 결과 요약(반영에 성공했을 때) / robot_id가 없으면 None
+        예) {"robot_id": 5, "battery_level": 18.4, "joint_wear": 42.1,
+             "status": "충전중"}
+
+    [주의]
+      status는 여기서 계산하지 않는다 — DAO의 UPDATE가 실행되는 순간
+      battery_status_update 트리거가 DB에서 이미 재계산해뒀으므로,
+      갱신 후 다시 조회해서 "트리거가 실제로 반영한 값"을 그대로 돌려준다.
+      (프론트도, 여기도 status 판정 로직을 따로 갖지 않는다는 0.6절 원칙과 동일)
+    """
+    robot_dao.update_robot_sensors(robot_id, battery_level, joint_wear)
+
+    # UPDATE 자체의 rowcount로는 "robot_id가 존재하는가"를 믿을 수 없다
+    # (robot_dao.update_robot_sensors 참고) — 갱신 후 다시 조회해서
+    # 존재 여부를 판단한다. 3.4절과 동일한 "없으면 None" 패턴.
+    robot = robot_dao.get_robot_by_id(robot_id)
+    if robot is None:
+        return None  # 존재하지 않는 robot_id — mqtt_bridge에서 로그만 남기고 무시
+
+    factory_id = robot_dao.get_factory_id_by_robot(robot_id)
+
+    payload = {
+        "robot_id": robot_id,
+        "battery_level": robot['battery_level'],
+        "joint_wear": robot['joint_wear'],
+        "status": robot['status'],
+    }
+
+    socketio.emit('robot_sensor_update', payload, room=f"factory_{factory_id}")
+    return payload

@@ -216,3 +216,76 @@ def _build_robot_search_conditions(robot_id, line_id, factory_id, status,
         from_clause = "FROM Robot r"
 
     return where_clause, from_clause, params
+
+
+# ── 14.2절 확장: 센서 시뮬레이터(MQTT)가 보낸 값 반영 ──────────────────
+
+def update_robot_sensors(robot_id, battery_level, joint_wear):
+    """
+    센서(시뮬레이터)가 보낸 battery_level/joint_wear 값을 Robot에 반영한다.
+
+    [참고 1]
+      status는 여기서 직접 건드리지 않는다 — battery_level이 이번 UPDATE로
+      실제로 바뀌면 battery_status_update 트리거(15.2절에서 버그 수정됨)가
+      BEFORE UPDATE 시점에 NEW.status를 알아서 재계산해 끼워넣는다.
+      즉 이 함수는 "센서값만 갱신"하고, 상태 전환은 DB에 위임한다.
+
+    [참고 2 — robot_id 존재 여부는 여기서 판단하지 않는다]
+      처음엔 cursor.rowcount > 0으로 "존재하는 robot_id였는지"를 판단하려
+      했으나, MySQL/PyMySQL의 UPDATE rowcount는 "조건에 매칭된 행 수"가
+      아니라 "실제로 값이 바뀐 행 수"다. battery_level은 INT 컬럼이라 센서
+      값(float)이 반올림되면서 직전 값과 우연히 같아지는 순간 rowcount가
+      0이 되어, 로봇이 멀쩡히 존재하는데도 "없다"고 오판하는 반복 재현
+      가능한 버그였다(3.7·6.4·15.2절의 "조용히 실패하는 버그" 계보에
+      새로 추가된 사례). 그래서 존재 여부 판단은 이 함수가 하지 않고,
+      호출자(robot_service.apply_sensor_reading)가 UPDATE 이후 다시
+      get_robot_by_id()로 조회해서 판단한다 — 3.4절에 이미 있는
+      "없으면 None" 패턴을 그대로 재사용하는 쪽이 더 안전하다.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE Robot
+            SET battery_level = %s, joint_wear = %s
+            WHERE robot_id = %s
+            """,
+            (battery_level, joint_wear, robot_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_factory_id_by_robot(robot_id):
+    """
+    로봇이 소속된 공장(factory_id)을 조회한다.
+    (error_dao.get_factory_id_by_robot()과 동일한 쿼리 — 센서 갱신 알림도
+     "그 로봇이 속한 공장 room"으로만 보내야 해서 robot_dao에도 둔다.
+     robot_service가 error_dao를 가져다 쓰는 계층 역방향 참조를 피하기
+     위한 선택이며, 8.2절에서 이미 "약간의 중복 vs 계층 간 참조" 트레이드
+     오프를 같은 방식으로 받아들인 전례가 있다.)
+
+    [반환값]
+      int: factory_id / None: 존재하지 않는 robot_id인 경우
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT l.factory_id
+            FROM Robot r
+            JOIN Line l ON r.line_id = l.line_id
+            WHERE r.robot_id = %s
+            """,
+            (robot_id,),
+        )
+        row = cursor.fetchone()
+        return row['factory_id'] if row else None
+    finally:
+        conn.close()

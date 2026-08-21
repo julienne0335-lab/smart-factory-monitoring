@@ -87,6 +87,26 @@ app = create_app()
 # 로컬 개발 서버 실행
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
+    DEBUG = True
     # debug=True : 코드 수정 시 서버 자동 재시작 + 에러 발생 시 상세 에러 페이지 표시
     #              (개발 중에만 사용, 배포 시에는 False로 바꾸거나 이 블록 자체를 안 씀)
-    socketio.run(app, debug=True)
+
+    # -------------------------------------------------------------------
+    # MQTT 센서 브리지 (14.2절 확장) — 이 __main__ 블록 안에서만 시작한다
+    # - create_app()은 gunicorn(배포)에서도 "app.py를 모듈로 import"하는
+    #   과정에서 항상 실행되지만, 그 안에서 MQTT 브리지를 시작해버리면
+    #   로컬 Mosquitto가 없는 배포 환경(Render)에서도 매번 연결을 시도하게
+    #   된다. 14장 전체가 "하드웨어/브로커 없이도 로컬에서 아키텍처를
+    #   검증한다"는 틀이므로, 브리지는 `python app.py`로 로컬 실행할
+    #   때만 붙도록 여기(=__main__ 블록)에 둔다.
+    # - DEBUG=True면 socketio.run()이 Werkzeug reloader를 켜서 프로세스를
+    #   부모/자식 두 번 실행한다. WERKZEUG_RUN_MAIN이 세팅된 쪽(자식,
+    #   실제로 요청을 서빙하는 프로세스)에서만 시작해야 MQTT 구독이
+    #   두 번 붙지 않는다 — 5.2절 순환 임포트만큼이나 "프로세스가 몇 번
+    #   실행되는가"를 몰라서 겪기 쉬운 함정이라 이렇게 가드해둔다.
+    # -------------------------------------------------------------------
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not DEBUG:
+        from mqtt_bridge import start_mqtt_bridge
+        start_mqtt_bridge()
+
+    socketio.run(app, debug=DEBUG)
