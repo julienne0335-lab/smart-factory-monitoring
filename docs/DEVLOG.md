@@ -601,11 +601,11 @@ Aiven에 트리거를 안 넣으면, 배포된 앱에서 `POST /api/errors/line`
 
 ## 13. 로컬/Aiven 계정 로그인 아이디 불일치
 
-`insert_dummy_admin.py`는 대상 DB를 옵션으로 구분합니다.
+`scripts/insert_dummy_admin.py`는 대상 DB를 옵션으로 구분합니다.
 
 ```
-python insert_dummy_admin.py           → 기본 .env 사용 (로컬 MariaDB)
-python insert_dummy_admin.py --aiven   → .env.aiven 사용 (Aiven MySQL)
+python scripts/insert_dummy_admin.py           → 기본 .env 사용 (로컬 MariaDB)
+python scripts/insert_dummy_admin.py --aiven   → .env.aiven 사용 (Aiven MySQL)
 ```
 
 로컬 DB의 login_id가 `서울_super`처럼 한글로 저장돼 있던 건, 로그인
@@ -620,7 +620,7 @@ DELETE FROM Admin;
 IntegrityError 발생)
 
 ```
-python insert_dummy_admin.py
+python scripts/insert_dummy_admin.py
 ```
 (옵션 없이 — 로컬로 들어감)
 
