@@ -496,7 +496,7 @@ OLD.battery_level` 조건을 추가해, **배터리 값 자체가 실제로 바�
 
 | 파일 | 내용 |
 |---|---|
-| `trigger_setup.sql` | 트리거 4개: `battery_status_update`(버그 수정), `robot_error_status`(기존 유지), `line_error_cascade`(신규), `line_error_resolve`(신규) |
+| `sql/trigger_setup.sql` | 트리거 4개: `battery_status_update`(버그 수정), `robot_error_status`(기존 유지), `line_error_cascade`(신규), `line_error_resolve`(신규) |
 | `dao/error_dao.py` | `create_line_error()`, `resolve_line_error()`, `get_factory_id_by_line()` 추가 |
 | `service/error_service.py` | `create_line_error()`, `resolve_line_error()` 추가 (socketio `'line_error'` 이벤트 포함) |
 | `routes/error.py` | `POST /api/errors/line`, `POST /api/errors/line/<id>/resolve` 추가 |
@@ -562,18 +562,18 @@ Robot에 "정지 원인" 컬럼을 추가해야 하는데, 지금 스키마 범�
 
 ### ⚠️ HeidiSQL의 DELIMITER 이슈
 
-`trigger_setup.sql`을 통째로 "전체 실행"(F9)하면, HeidiSQL이 `DELIMITER`
+`sql/trigger_setup.sql`을 통째로 "전체 실행"(F9)하면, HeidiSQL이 `DELIMITER`
 지시어를 제대로 못 알아듣고 트리거 본문 안의 세미콜론(`;`)에서 문장을
 잘라버려서 `SQL 오류 (1064)`가 발생합니다. (실제로 이 문제를 겪었고, 아래
 방법으로 해결했습니다.)
 
-그래서 `trigger_setup.sql`은 `DELIMITER` 없이, 각 트리거를 일반 세미콜론
+그래서 `sql/trigger_setup.sql`은 `DELIMITER` 없이, 각 트리거를 일반 세미콜론
 하나로 끝나는 완전한 문장으로 다시 작성했고, 파일 안에 **STEP 0~5**로
 구간을 나눠뒀습니다.
 
 **적용 순서:**
 1. HeidiSQL에서 대상 DB(로컬 또는 Aiven) 연결
-2. `trigger_setup.sql`을 쿼리 탭에 로드
+2. `sql/trigger_setup.sql`을 쿼리 탭에 로드
 3. **STEP 0** (`DROP TRIGGER IF EXISTS` 4줄)을 마우스로 통째로 드래그 선택 → F9
 4. **STEP 1 ~ STEP 4**를 각각 `CREATE TRIGGER ...`부터 그 아래 `END;`까지
    통째로 선택 → F9 (총 4번, 절대 전체 실행하지 말고 블록 단위로)
@@ -584,7 +584,7 @@ Robot에 "정지 원인" 컬럼을 추가해야 하는데, 지금 스키마 범�
    `battery_status_update`, `robot_error_status`, `line_error_cascade`,
    `line_error_resolve` 4개가 나오면 성공.
 
-(터미널에서 `mysql -u root -p smart_factory < trigger_setup.sql`로 실행하는
+(터미널에서 `mysql -u root -p smart_factory < sql/trigger_setup.sql`로 실행하는
 경우는 DELIMITER 없이도 문제없이 한 번에 실행됩니다 — mysql 클라이언트는
 세미콜론 처리를 다르게 하기 때문.)
 
@@ -647,15 +647,15 @@ Aiven 반영은 각자 환경에서 12~13장 절차대로 진행)
 
 ```bash
 git status
-git add dao/error_dao.py dao/worklog_dao.py service/error_service.py service/worklog_service.py routes/error.py routes/worklog.py trigger_setup.sql
+git add dao/error_dao.py dao/worklog_dao.py service/error_service.py service/worklog_service.py routes/error.py routes/worklog.py sql/trigger_setup.sql
 git commit -m "라인장애 연쇄 처리(LineError cascade) + 에너지 비용 통계 추가, battery_status_update 트리거 버그 수정"
 git push
 ```
 
 ## 16. 배포 체크리스트
 
-- [ ] 로컬 DB에 `trigger_setup.sql` 적용 (완료)
-- [ ] Aiven DB에 `trigger_setup.sql` 적용 (STEP 0~4, HeidiSQL Aiven 연결로)
+- [ ] 로컬 DB에 `sql/trigger_setup.sql` 적용 (완료)
+- [ ] Aiven DB에 `sql/trigger_setup.sql` 적용 (STEP 0~4, HeidiSQL Aiven 연결로)
 - [ ] 위 커밋 push (Render 등 자동배포 트리거)
 - [ ] 배포된 URL에서 로그인 → `POST /errors/line` 테스트로 최종 확인
 - [ ] (선택) `realtime.js`에 `socket.on('line_error', ...)` 핸들러 추가

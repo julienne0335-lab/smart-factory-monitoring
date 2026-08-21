@@ -49,7 +49,7 @@ cp .env.example .env
 
 # DDL / View / Trigger / Index 적용 (docs/ARCHITECTURE.md 3~6장 참고)
 mysql -u root -p smart_factory < schema.sql
-mysql -u root -p smart_factory < trigger_setup.sql
+mysql -u root -p smart_factory < sql/trigger_setup.sql
 
 python app.py   # http://localhost:5000
 ```

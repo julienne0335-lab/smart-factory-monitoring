@@ -82,21 +82,64 @@ class TestCalculateDuration:
 # =============================================================================
 
 class TestGetWorklogsByRobot:
+    """
+    [페이지네이션 추가로 응답 형태가 바뀜]
+    Locust 부하 테스트에서 로봇 1대 워크로그 응답이 평균 2.64MB, 14~20초씩
+    걸리는 게 확인되어 LIMIT/OFFSET 페이지네이션을 추가함. 그 결과 반환값이
+    배열 그 자체에서 {data, page, per_page, total_count, total_pages}
+    객체로 바뀌었으므로, 아래 테스트들은 result["data"][...] 형태로 검증함.
+    """
 
+    @patch("service.worklog_service.worklog_dao.count_worklogs_by_robot")
     @patch("service.worklog_service.worklog_dao.get_worklogs_by_robot")
-    def test_adds_duration_to_each_log(self, mock_dao):
-        mock_dao.return_value = [
+    def test_adds_duration_to_each_log(self, mock_get, mock_count):
+        mock_count.return_value = 1
+        mock_get.return_value = [
             _worklog(datetime(2026, 1, 1, 9, 0), datetime(2026, 1, 1, 9, 30))
         ]
 
         result = worklog_service.get_worklogs_by_robot(1)
 
-        assert result[0]["duration_minutes"] == 30.0
+        assert result["data"][0]["duration_minutes"] == 30.0
+
+    @patch("service.worklog_service.worklog_dao.count_worklogs_by_robot")
+    @patch("service.worklog_service.worklog_dao.get_worklogs_by_robot")
+    def test_pagination_metadata_is_correct(self, mock_get, mock_count):
+        """총 250건, per_page=100이면 offset=100(2페이지), total_pages=3(올림)이어야 함"""
+        mock_count.return_value = 250
+        mock_get.return_value = []
+
+        result = worklog_service.get_worklogs_by_robot(1, page=2, per_page=100)
+
+        mock_get.assert_called_once_with(1, limit=100, offset=100)
+        assert result["page"] == 2
+        assert result["per_page"] == 100
+        assert result["total_count"] == 250
+        assert result["total_pages"] == 3  # ceil(250/100)
 
 
 # =============================================================================
 # get_long_worklogs() — is_warning 플래그
 # =============================================================================
+
+class TestGetWorklogsByDate:
+    """get_worklogs_by_robot과 동일한 페이지네이션 로직을 공유하므로 패턴도 동일"""
+
+    @patch("service.worklog_service.worklog_dao.count_worklogs_by_date")
+    @patch("service.worklog_service.worklog_dao.get_worklogs_by_date")
+    def test_adds_duration_and_pagination_metadata(self, mock_get, mock_count):
+        mock_count.return_value = 5
+        mock_get.return_value = [
+            _worklog(datetime(2024, 1, 1, 9, 0), datetime(2024, 1, 1, 9, 20))
+        ]
+
+        result = worklog_service.get_worklogs_by_date("2024-01-01", "2024-01-07")
+
+        mock_get.assert_called_once_with("2024-01-01", "2024-01-07", limit=100, offset=0)
+        assert result["data"][0]["duration_minutes"] == 20.0
+        assert result["total_count"] == 5
+        assert result["total_pages"] == 1
+
 
 class TestGetLongWorklogs:
 
