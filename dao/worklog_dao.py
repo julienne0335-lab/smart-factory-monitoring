@@ -21,6 +21,64 @@ worklog_dao.py — WorkLog 테이블 DB 접근 계층 (DAO)
 from db import get_connection
 
 
+# ── 에너지 비용 집계 상수 (신규 — "수수료 통계 ↔ 작업별 에너지 비용 집계" 대응) ──
+#
+# [추정치임을 명시]
+# 이 프로젝트에는 로봇의 실제 전력 사용량을 측정하는 센서/계량 장비가 없다.
+# 아래 kW 값은 작업 강도가 높을수록 소비전력도 크다는 일반적인 산업용
+# 로봇팔 특성을 참고해 작업 유형별로 어림잡은 "추정치"이고, 전기요금
+# 단가(COST_PER_KWH_WON)도 산업용 저압 전력 요금대를 참고한 예시 값이다.
+# 실제 청구서/계량 데이터가 아니라 "어떤 작업/라인/로봇이 상대적으로
+# 전력을 많이 쓰는가"를 비교하기 위한 통계 목적의 근사치이므로, 발표나
+# 문서에 인용할 때는 이 전제를 함께 밝힐 것.
+WORK_TYPE_POWER_KW = {
+    # 서울공장 (자동차)
+    '용접': 12.0,
+    '도장': 6.0,
+    '조립': 4.0,
+    '품질검사': 2.0,
+    '부품이송': 5.0,
+    # 부산공장 (반도체)
+    '웨이퍼절삭': 9.0,
+    '노광': 7.0,
+    '식각': 8.0,
+    '세정': 5.0,
+    '검사': 2.0,
+    # 인천공장 (식품)
+    '원료투입': 4.0,
+    '가공': 6.0,
+    '포장': 3.5,
+    '살균': 5.5,
+    '출하검사': 2.0,
+}
+DEFAULT_POWER_KW = 5.0   # WORK_TYPE_POWER_KW에 없는 work_type이 들어왔을 때의 안전한 기본값
+COST_PER_KWH_WON = 150   # 전기요금 단가 (원/kWh, 추정치)
+
+
+def _work_type_power_case_sql(column="work_type"):
+    """
+    work_type별 소비전력(kW)을 SQL CASE WHEN 식으로 변환해서 돌려준다.
+
+    [SQL 인젝션 안전성]
+      여기 들어가는 값은 사용자 입력이 아니라 이 파일 상단에 고정으로
+      정의된 WORK_TYPE_POWER_KW 딕셔너리(개발자가 코드에 적어둔 값)이다.
+      search_worklogs() 등에서 사용자 입력값은 항상 %s 자리표시자로만
+      바인딩하는 것과는 별개로, 이 함수는 "고정된 SQL 조각"만 조립한다.
+
+    [파라미터]
+      column (str): work_type 컬럼을 가리키는 SQL 표현식
+                    (예: "work_type" 또는 JOIN 시 별칭 붙은 "w.work_type")
+
+    [반환값]
+      str: "CASE work_type WHEN '용접' THEN 12.0 ... ELSE 5.0 END" 형태의 SQL 조각
+    """
+    when_clauses = " ".join(
+        f"WHEN '{work_type}' THEN {power_kw}"
+        for work_type, power_kw in WORK_TYPE_POWER_KW.items()
+    )
+    return f"CASE {column} {when_clauses} ELSE {DEFAULT_POWER_KW} END"
+
+
 # ── 기본 조회 함수 ──────────────────────────────────────────────────
 
 def get_worklogs_by_robot(robot_id, limit=100, offset=0):
@@ -185,29 +243,39 @@ def get_recent_worklogs(n):
 
 def get_worklog_stats_by_robot():
     """
-    로봇별 작업 통계를 반환한다.
+    로봇별 작업 통계를 반환한다. (에너지 비용 집계 추가)
 
     [반환값]
-      list of dict: 로봇별 총 작업 건수 + 평균 작업시간(분)
-      예) [{"robot_id": 1, "total_count": 150, "avg_minutes": 45.0}, ...]
+      list of dict: 로봇별 총 작업 건수 + 평균 작업시간(분) + 총 에너지 비용(원)
+      예) [{"robot_id": 1, "total_count": 150, "avg_minutes": 45.0,
+            "total_energy_cost_won": 82400}, ...]
 
     [활용]
       모니터링 대시보드에서 어떤 로봇이 가장 많이/적게 일했는지,
-      작업시간이 비정상적으로 긴 로봇은 없는지 파악할 때 사용.
+      작업시간이 비정상적으로 긴 로봇은 없는지, 전력을 많이 쓰는
+      로봇은 어디인지 파악할 때 사용.
 
     [참고]
       COUNT(*)                          → 작업 건수
       AVG(TIMESTAMPDIFF(...))           → 평균 작업시간 (분 단위)
       TIMESTAMPDIFF(MINUTE, a, b)       → a~b 사이의 분 단위 차이
       GROUP BY robot_id                 → 로봇별로 집계
+      total_energy_cost_won             → SUM(작업시간(h) × work_type별 kW)
+                                           × COST_PER_KWH_WON (전부 추정치,
+                                           파일 상단 WORK_TYPE_POWER_KW 주석 참고)
     """
+    power_case = _work_type_power_case_sql("work_type")
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT robot_id,
                    COUNT(*) AS total_count,
-                   AVG(TIMESTAMPDIFF(MINUTE, started_at, ended_at)) AS avg_minutes
+                   AVG(TIMESTAMPDIFF(MINUTE, started_at, ended_at)) AS avg_minutes,
+                   ROUND(SUM(
+                       TIMESTAMPDIFF(MINUTE, started_at, ended_at) / 60.0
+                       * {power_case}
+                   ) * {COST_PER_KWH_WON}) AS total_energy_cost_won
             FROM WorkLog
             GROUP BY robot_id
         """)
@@ -218,29 +286,70 @@ def get_worklog_stats_by_robot():
 
 def get_worklog_stats_by_line():
     """
-    라인별 작업 통계를 반환한다.
+    라인별 작업 통계를 반환한다. (에너지 비용 집계 추가)
 
     [반환값]
-      list of dict: 라인별 총 작업 건수 + 평균 작업시간(분)
-      예) [{"line_id": 1, "total_count": 500, "avg_minutes": 38.0}, ...]
+      list of dict: 라인별 총 작업 건수 + 평균 작업시간(분) + 총 에너지 비용(원)
+      예) [{"line_id": 1, "total_count": 500, "avg_minutes": 38.0,
+            "total_energy_cost_won": 214500}, ...]
 
     [활용]
-      어느 라인이 가장 바쁜지, 라인별 작업 효율을 비교할 때 사용.
+      어느 라인이 가장 바쁜지, 라인별 작업 효율/전력 사용을 비교할 때 사용.
 
     [참고]
       WorkLog에는 line_id가 없어서 Robot 테이블과 JOIN 필요!
       WorkLog → robot_id → Robot → line_id 순서로 연결
+      total_energy_cost_won 계산 방식은 get_worklog_stats_by_robot()과 동일.
     """
+    power_case = _work_type_power_case_sql("w.work_type")
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT r.line_id,
                    COUNT(*) AS total_count,
-                   AVG(TIMESTAMPDIFF(MINUTE, w.started_at, w.ended_at)) AS avg_minutes
+                   AVG(TIMESTAMPDIFF(MINUTE, w.started_at, w.ended_at)) AS avg_minutes,
+                   ROUND(SUM(
+                       TIMESTAMPDIFF(MINUTE, w.started_at, w.ended_at) / 60.0
+                       * {power_case}
+                   ) * {COST_PER_KWH_WON}) AS total_energy_cost_won
             FROM WorkLog w
             JOIN Robot r ON w.robot_id = r.robot_id
             GROUP BY r.line_id
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_worklog_stats_by_work_type():
+    """
+    작업 유형(work_type)별 통계를 반환한다.
+    (신규 — "작업별 에너지 비용·소요시간 집계"를 가장 직접적으로 대응하는 단위)
+
+    [반환값]
+      list of dict: 작업유형별 총 작업 건수 + 평균 작업시간(분) + 총 에너지 비용(원)
+      예) [{"work_type": "용접", "total_count": 45210, "avg_minutes": 62.3,
+            "total_energy_cost_won": 8432100}, ...]
+
+    [활용]
+      로봇별/라인별 집계와는 다른 축(dimension)으로, "어떤 작업 자체가
+      시간/전력을 가장 많이 잡아먹는가"를 work_type 단위로 바로 비교할 수 있음.
+    """
+    power_case = _work_type_power_case_sql("work_type")
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT work_type,
+                   COUNT(*) AS total_count,
+                   AVG(TIMESTAMPDIFF(MINUTE, started_at, ended_at)) AS avg_minutes,
+                   ROUND(SUM(
+                       TIMESTAMPDIFF(MINUTE, started_at, ended_at) / 60.0
+                       * {power_case}
+                   ) * {COST_PER_KWH_WON}) AS total_energy_cost_won
+            FROM WorkLog
+            GROUP BY work_type
         """)
         return cursor.fetchall()
     finally:

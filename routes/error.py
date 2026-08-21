@@ -130,6 +130,60 @@ def get_line_errors_by_type(error_type):
     return jsonify(errors)
 
 
+# -----------------------------------------------------------------------------
+# POST /errors/line
+# 새 라인 에러 등록 (+ 라인/로봇 상태 자동 전환, 실시간 알림) — 신규
+# -----------------------------------------------------------------------------
+@error_bp.route('/errors/line', methods=['POST'])
+def create_line_error():
+    """
+    새 라인 에러를 등록한다.
+    - 필수 body: line_id, error_type
+    - line_id가 존재하지 않으면 404
+    - 성공하면 201 + 생성된 error_id 반환
+    - DB 트리거(line_error_cascade)가 Line.status='정지' +
+      해당 라인 소속 로봇 전체 status='오류정지'로 자동 반영함
+      (trigger_setup.sql 참고)
+    """
+    data = request.get_json(silent=True) or {}
+    line_id = data.get('line_id')
+    error_type = data.get('error_type')
+
+    if line_id is None or not error_type:
+        return jsonify({"message": "line_id와 error_type은 필수입니다."}), 400
+
+    error_id = error_service.create_line_error(line_id, error_type)
+
+    if error_id is None:
+        return jsonify({"message": f"line_id={line_id}에 해당하는 라인이 없습니다."}), 404
+
+    return jsonify({
+        "error_id": error_id,
+        "line_id": line_id,
+        "error_type": error_type,
+    }), 201
+
+
+# -----------------------------------------------------------------------------
+# POST /errors/line/<error_id>/resolve
+# 라인 에러 처리완료 (+ 라인/로봇 상태 자동 복구) — 신규
+# -----------------------------------------------------------------------------
+@error_bp.route('/errors/line/<int:error_id>/resolve', methods=['POST'])
+def resolve_line_error(error_id):
+    """
+    라인 에러를 처리완료(status='완료') 상태로 바꾼다.
+    - DB 트리거(line_error_resolve)가 Line.status='가동중' +
+      그 라인에서 오류정지 상태였던 로봇을 배터리 기준으로 자동 복구함
+    - 존재하지 않는 error_id면 404
+    """
+    ok = error_service.resolve_line_error(error_id)
+
+    if not ok:
+        return jsonify({"message": f"error_id={error_id}에 해당하는 라인 에러가 없습니다."}), 404
+
+    return jsonify({"error_id": error_id, "status": "완료"})
+
+
 # =============================================================================
 # 통계 및 기타
 # =============================================================================

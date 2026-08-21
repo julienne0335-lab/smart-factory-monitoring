@@ -207,3 +207,52 @@ def search_line_errors(line_id=None, factory_id=None, error_type=None, status=No
     errors = [_add_pending_flag(e) for e in errors]
 
     return _paginate(errors, page, per_page, total_count)
+
+
+# -----------------------------------------------------------------------------
+# 라인 에러 등록/처리 (신규 — "지점장애 ↔ 라인 전체 가동 중단" 연쇄 처리)
+# -----------------------------------------------------------------------------
+
+def create_line_error(line_id, error_type):
+    """
+    새 라인 에러를 등록하고, 해당 라인이 속한 공장에 실시간 알림을 보낸다.
+    (create_robot_error()와 동일한 구조 — line 버전)
+
+    [처리 순서]
+      1. line_id가 속한 factory_id부터 조회 → 없으면 존재하지 않는
+         라인이므로 DB에 쓰지 않고 None 반환 (routes에서 404 처리)
+      2. DAO를 통해 LineError INSERT
+         → line_error_cascade 트리거가 Line.status/Robot.status를
+           같은 트랜잭션 안에서 자동으로 갱신함
+      3. socketio.emit()으로 해당 공장 room에 실시간 알림 전송
+         (로봇 개별 오류(robot_error)와 구분해서 프론트가 다르게
+          표시할 수 있도록 이벤트명을 'line_error'로 따로 둠)
+
+    [반환값]
+      int: 새로 생성된 error_id
+      None: line_id가 존재하지 않는 경우
+    """
+    factory_id = error_dao.get_factory_id_by_line(line_id)
+    if factory_id is None:
+        return None
+
+    error_id = error_dao.create_line_error(line_id, error_type)
+
+    socketio.emit('line_error', {
+        'error_id': error_id,
+        'line_id': line_id,
+        'error_type': error_type,
+    }, room=f"factory_{factory_id}")
+
+    return error_id
+
+
+def resolve_line_error(error_id):
+    """
+    라인 에러를 처리완료로 표시한다.
+    - line_error_resolve 트리거가 Line/Robot 상태 복구까지 자동으로 처리함
+
+    [반환값]
+      bool: 처리 성공 여부 (존재하지 않는 error_id면 False)
+    """
+    return error_dao.resolve_line_error(error_id)

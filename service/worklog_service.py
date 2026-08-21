@@ -92,7 +92,7 @@ def get_recent_worklogs(n):
 
 def get_worklog_stats_by_robot():
     """
-    로봇별 작업 통계 조회
+    로봇별 작업 통계 조회 (total_energy_cost_won 포함)
     - 이미 집계된 통계 데이터이므로 가공 없이 그대로 반환
     """
     return worklog_dao.get_worklog_stats_by_robot()
@@ -100,10 +100,18 @@ def get_worklog_stats_by_robot():
 
 def get_worklog_stats_by_line():
     """
-    라인별 작업 통계 조회
+    라인별 작업 통계 조회 (total_energy_cost_won 포함)
     - 이미 집계된 통계 데이터이므로 가공 없이 그대로 반환
     """
     return worklog_dao.get_worklog_stats_by_line()
+
+
+def get_worklog_stats_by_work_type():
+    """
+    작업 유형별 작업 통계 조회 (신규)
+    - 이미 집계된 통계 데이터이므로 가공 없이 그대로 반환
+    """
+    return worklog_dao.get_worklog_stats_by_work_type()
 
 
 def get_worklogs_with_details():

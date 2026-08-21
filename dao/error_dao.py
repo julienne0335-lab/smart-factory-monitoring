@@ -647,3 +647,102 @@ def _build_line_error_search_conditions(line_id, factory_id, error_type, status,
         from_clause = "FROM LineError le"
 
     return where_clause, from_clause, params
+
+
+# ── LineError 생성/처리 함수 (신규 — "지점장애 ↔ 라인 전체 가동 중단" 연쇄 처리) ──
+#
+# 지금까지 LineError는 조회 함수만 있었고, 실제로 라인 에러를 "등록"하는
+# 경로가 없었다 (RobotError는 create_robot_error()가 있는데 LineError는
+# 없었음). 구조_.pdf 8절에서 설계한 "라인장애 → 소속 로봇 전체 상태 반영"
+# 트랜잭션 패턴을 실제로 동작시키려면 이 등록 경로가 있어야 하므로 추가함.
+#
+# 실제 상태 전파(Line/Robot status 변경)는 여기서 UPDATE 문으로 직접 하지
+# 않고, trigger_setup.sql의 line_error_cascade / line_error_resolve
+# 트리거가 담당한다. DAO에서 직접 하지 않은 이유는 battery Trigger와
+# 동일한 설계 원칙 때문 — "어떤 경로로 LineError가 바뀌든(API, 배치,
+# DB 콘솔 직접 수정) 상태가 항상 일관되게 유지되어야 한다."
+
+def create_line_error(line_id, error_type):
+    """
+    새 라인 에러를 1건 등록한다.
+
+    [파라미터]
+      line_id    (int): 장애가 발생한 라인 ID
+      error_type (str): '설비고장' / '전력이상' / '원자재부족' / '안전사고' / '기타'
+
+    [부수효과 — DB 트리거]
+      이 INSERT가 커밋되면 line_error_cascade 트리거가 같은 트랜잭션
+      안에서 자동 실행되어 Line.status → '정지', 해당 라인 소속
+      Robot 전체 → '오류정지'로 반영한다. (trigger_setup.sql 참고)
+
+    [반환값]
+      int: 새로 생성된 error_id (status는 DB 기본값 '미처리'로 채워짐)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO LineError (line_id, error_type) VALUES (%s, %s)",
+            (line_id, error_type)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def resolve_line_error(error_id):
+    """
+    라인 에러를 처리완료(status='완료') 상태로 바꾼다.
+
+    [파라미터]
+      error_id (int): 완료 처리할 라인 에러 ID
+
+    [부수효과 — DB 트리거]
+      line_error_resolve 트리거가 status가 '미처리' → '완료'로 바뀌는
+      순간을 감지해서 Line.status를 '가동중'으로, 그 라인에서 '오류정지'
+      상태였던 로봇을 배터리 기준으로 자동 복구한다.
+
+    [반환값]
+      bool: 실제로 갱신된 행이 있으면 True, 존재하지 않는 error_id면 False
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE LineError SET status = '완료' WHERE error_id = %s",
+            (error_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def get_factory_id_by_line(line_id):
+    """
+    라인이 소속된 공장(factory_id)을 조회한다.
+    - get_factory_id_by_robot()의 라인 버전. socketio 알림을
+      "그 라인이 속한 공장 room"으로 보내기 위해 필요함.
+
+    [반환값]
+      int: factory_id
+      None: 존재하지 않는 line_id인 경우
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT factory_id FROM Line WHERE line_id = %s",
+            (line_id,)
+        )
+        row = cursor.fetchone()
+        return row['factory_id'] if row else None
+    finally:
+        conn.close()

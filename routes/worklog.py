@@ -140,8 +140,25 @@ def get_worklog_stats_by_line():
     """
     라인별 작업 통계를 조회한다.
     - stats/robot과 동일하게 이미 집계된 데이터를 그대로 반환
+    - 각 항목에 total_energy_cost_won(추정 에너지 비용, 원)이 포함됨
     """
     worklogs = worklog_service.get_worklog_stats_by_line()
+    return jsonify(worklogs)
+
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/stats/work_type
+# 작업 유형별 작업 통계 (집계 데이터, 신규 — 에너지 비용 포함)
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/stats/work_type')
+def get_worklog_stats_by_work_type():
+    """
+    작업 유형(work_type)별 통계를 조회한다.
+    - stats/robot, stats/line과 동일한 패턴, 집계 축만 work_type
+    - 각 항목에 total_energy_cost_won(추정 에너지 비용, 원)이 포함됨
+    - 예: /worklogs/stats/work_type
+    """
+    worklogs = worklog_service.get_worklog_stats_by_work_type()
     return jsonify(worklogs)
 
 
