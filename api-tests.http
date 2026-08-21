@@ -1,0 +1,181 @@
+@baseUrl = https://smart-factory-monitoring.onrender.com
+
+### =========================================================
+### 사용법: 각 ### 블록 바로 위에 'Send Request'라는 파란 링크가 뜹니다.
+### 그걸 클릭하면 바로 요청이 실행되고 오른쪽에 응답이 뜹니다.
+### 맨 위 @baseUrl 값을 실제 Render 주소로 바꾸고 시작하세요.
+### =========================================================
+
+### ===== 로봇 (Robots) =====
+
+### 전체 로봇 목록
+# 200 확인 + 각 항목에 is_alert 키 존재 확인
+GET {{baseUrl}}/api/robots
+
+### 로봇 단건 조회 (존재)
+# 200 확인. status가 오류정지면 is_alert=true인지 확인
+GET {{baseUrl}}/api/robots/1
+
+### 로봇 단건 조회 (존재하지 않음)
+# 핵심 케이스: 404 확인
+GET {{baseUrl}}/api/robots/999999
+
+### 라인별 로봇 목록
+GET {{baseUrl}}/api/robots/line/1
+
+### 상태별 로봇 목록 (오류정지)
+# 결과 전부 is_alert=true인지 확인
+GET {{baseUrl}}/api/robots/status/오류정지
+
+### ===== 통합 검색 (Search) =====
+
+### 로봇 검색 — 라인 + 상태 조합
+# 200 확인. line_id=2이면서 status가 오류정지인 로봇만 나오는지 확인
+GET {{baseUrl}}/api/robots/search?line_id=2&status=오류정지
+
+### 로봇 검색 — 배터리 부족 로봇만
+# 200 확인. battery_level이 20 이하인 로봇만 나오는지 확인
+GET {{baseUrl}}/api/robots/search?max_battery=20
+
+### 로봇 검색 — 조건에 안 맞는 경우 (빈 결과)
+# 200 확인. data가 빈 배열([])이고 total_count가 0인지 확인
+GET {{baseUrl}}/api/robots/search?line_id=999
+
+### 로봇 검색 — 페이지네이션 응답 형태 확인
+# 200 확인. {data, page, per_page, total_count, total_pages} 키가 다 있는지 확인
+GET {{baseUrl}}/api/robots/search?page=1&per_page=5
+
+### 워크로그 검색 — 로봇 + 작업유형 + 날짜 조합
+# 200 확인. robot_id=5 + work_type=조립 + 날짜범위 조건이 다 맞는지 확인
+GET {{baseUrl}}/api/worklogs/search?robot_id=5&work_type=조립&start=2024-01-01&end=2024-01-07
+
+### 워크로그 검색 — 라인 + 작업주체 + 최소작업시간
+# 200 확인. line_id=2 + worker_type=HUMAN + min_minutes=90 조합 확인
+GET {{baseUrl}}/api/worklogs/search?line_id=2&worker_type=HUMAN&min_minutes=90
+
+### 워크로그 검색 — 페이지네이션 2페이지 이동 확인
+# 200 확인. page=2 응답의 page 값이 실제로 2로 찍히는지 확인
+GET {{baseUrl}}/api/worklogs/search?work_type=조립&start=2024-01-01&end=2024-12-31&page=2
+
+### ===== 워크로그 (Worklogs) =====
+
+### 로봇별 워크로그
+# 각 항목에 duration_minutes 계산되어 있는지 확인
+GET {{baseUrl}}/api/worklogs/robot/1
+
+### 작업유형별 워크로그
+GET {{baseUrl}}/api/worklogs/work_type/조립
+
+### 작업자유형별 워크로그
+GET {{baseUrl}}/api/worklogs/worker_type/ROBOT
+
+### 날짜범위 워크로그
+# 100만 건 중 일부만, 응답 속도 체크
+GET {{baseUrl}}/api/worklogs/date?start=2024-01-01&end=2024-01-07
+
+### 날짜범위 워크로그 (파라미터 누락)
+# 엣지 케이스: 에러 없이 빈 리스트인지, 500 나는지 확인
+GET {{baseUrl}}/api/worklogs/date
+
+### 최근 워크로그 (기본 10건)
+GET {{baseUrl}}/api/worklogs/recent
+
+### 최근 워크로그 (n=20)
+GET {{baseUrl}}/api/worklogs/recent?n=20
+
+### 장시간 작업 워크로그 (기본 60분)
+# 각 항목 is_warning 플래그 확인
+GET {{baseUrl}}/api/worklogs/long
+
+### 장시간 작업 워크로그 (90분 기준)
+GET {{baseUrl}}/api/worklogs/long?min_minutes=90
+
+### 로봇별 작업 통계
+GET {{baseUrl}}/api/worklogs/stats/robot
+
+### 라인별 작업 통계
+GET {{baseUrl}}/api/worklogs/stats/line
+
+### 워크로그 상세 (JOIN)
+GET {{baseUrl}}/api/worklogs/details
+
+### ===== 에러 (Errors) =====
+
+### 로봇별 에러 목록
+# is_pending 플래그 확인
+GET {{baseUrl}}/api/errors/robot/1 
+
+### 에러유형별 로봇에러
+GET {{baseUrl}}/api/errors/robot/type/센서이상
+
+### 상태별 로봇에러 (미처리)
+# 핵심 회귀 확인: 결과 전부 is_pending=true
+GET {{baseUrl}}/api/errors/robot/status/미처리
+
+### 최근 로봇에러
+GET {{baseUrl}}/api/errors/robot/recent?n=10
+
+### 날짜범위 로봇에러
+GET {{baseUrl}}/api/errors/robot/date?start=2024-01-01&end=2024-01-31
+
+### 라인별 에러
+GET {{baseUrl}}/api/errors/line/1
+
+### 에러유형별 라인에러
+GET {{baseUrl}}/api/errors/line/type/센서이상
+
+### 로봇별 에러 통계
+GET {{baseUrl}}/api/errors/stats/robot
+
+### 미해결 에러 전체
+# 전부 is_pending=true인지 확인
+GET {{baseUrl}}/api/errors/unresolved
+
+### 에러 상세 (JOIN)
+GET {{baseUrl}}/api/errors/details
+
+### 로봇 에러 등록 (정상)
+# 201 확인. 이 요청 직후 브라우저로 대시보드 열어서 실시간 알림(🔔) 뜨는지 같이 확인
+POST {{baseUrl}}/api/errors/robot
+Content-Type: application/json
+
+{
+  "robot_id": 1,
+  "error_type": "센서이상"
+}
+
+### 로봇 에러 등록 (필수값 누락)
+# 핵심 케이스: 400 Bad Request 확인 (error_type 누락)
+POST {{baseUrl}}/api/errors/robot
+Content-Type: application/json
+
+{
+  "robot_id": 1
+}
+
+### ===== Claude 분석 (6단계, billing 활성화 후에만 테스트) =====
+
+### 로봇 1대 에러 분석 (Claude)
+# ANTHROPIC_API_KEY billing 필요. 에러 이력 없으면 404
+POST {{baseUrl}}/api/errors/analyze/robot/1
+
+### 미해결 에러 배치 분석 (Claude)
+# ANTHROPIC_API_KEY billing 필요
+POST {{baseUrl}}/api/errors/analyze/batch?limit=30
+
+### ===== 화면 페이지 =====
+
+### 메인 페이지
+# 200 + HTML 반환 확인
+GET {{baseUrl}}/
+
+### 에러 현황 페이지
+GET {{baseUrl}}/errors
+
+### 워크로그 조회 페이지
+GET {{baseUrl}}/worklogs
+
+### 진단용 테스트 
+GET {{baseUrl}}/api/errors/robot
+
+
