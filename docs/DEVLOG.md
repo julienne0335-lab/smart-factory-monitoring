@@ -961,3 +961,127 @@ git add Dockerfile docker-compose.yml .dockerignore \
 git commit -m "docker-compose로 전체 스택(app+MariaDB+Mosquitto) 컨테이너화, socketio host 바인딩 버그 수정"
 git push
 ```
+
+---
+
+## 19. 확장 3 — 정비(Maintenance) 등록 API + 센서값 프론트 실시간 반영 (2026-08-22)
+
+17장이 "알려진 한계"로 남겨둔 것 두 가지를 마저 채운 기록이다.
+
+1. `joint_wear`(관절 마모도)가 시뮬레이터에서 계속 누적만 되고 리셋되지
+   않는다 — 정비 등록 시 초기화되어야 하는데 그 연결이 없었다.
+2. `robot_sensor_update` 소켓 이벤트를 프론트가 구독하지 않는다 — DB/서버는
+   실시간으로 갱신되는데 화면은 새로고침해야만 반영됐다.
+
+### 19.1 정비(Maintenance) 등록 API — 신규
+
+`Maintenance` 테이블(`maint_id`, `robot_id`, `part_name`, `maint_type`,
+`performed_at`)은 2장 더미데이터(300건)로 이미 채워져 있었지만, 이걸 실제로
+읽거나 쓰는 DAO/Service/Routes가 그동안 하나도 없었다 — `scripts/insert_dummy_error.py`가
+DB에 직접 INSERT해둔 것뿐, 애플리케이션 계층에서는 존재하지 않는 기능이었다.
+
+`error_service.create_robot_error()`(5단계)와 동일한 3단계 패턴으로 새로 만들었다:
+
+```
+POST /api/maintenance  { robot_id, part_name, maint_type }
+  ① robot_dao.get_factory_id_by_robot() — 없으면 404
+  ② maintenance_dao.create_maintenance() — INSERT
+  ③ robot_dao.reset_joint_wear() — joint_wear = 0
+  ④ socketio.emit('robot_maintenance', {..., joint_wear: 0}, room=f"factory_{factory_id}")
+
+GET /api/maintenance/robot/<robot_id>  — 정비 이력 조회 (최근순)
+```
+
+`POST /errors/robot`, `POST /errors/line`과 마찬가지로 로그인 보호를 걸지
+않았다 — 이 프로젝트에서 "쓰기" 계열 에러/정비 등록 API는 현장 자동화
+도구(또는 이번 것처럼 MQTT/센서 파이프라인)가 호출할 수 있다고 보고
+지금까지 통일해온 컨벤션을 그대로 따른 것.
+
+새 파일: `dao/maintenance_dao.py`, `service/maintenance_service.py`,
+`routes/maintenance.py`. 기존 파일 변경: `dao/robot_dao.py`(`reset_joint_wear()`
+추가), `app.py`(블루프린트 등록).
+
+### 19.2 프론트 실시간 반영 — `robot_sensor_update` / `robot_maintenance`
+
+`static/js/main.js`의 `renderRobotTable()`이 그동안 `<tr>`에 식별자를 전혀
+안 남겨서, 소켓 이벤트가 와도 "화면의 어느 행을 갱신해야 하는지" 알 방법이
+없었다. `<tr data-robot-id="...">` + 배터리/마모도/상태 셀에 각각
+`.cell-battery`/`.cell-wear`/`.cell-status` 클래스를 붙이고,
+`updateRobotRow(robotId, battery, wear, status)` 함수를 추가해 해당 셀만
+갱신하도록 했다(행 전체를 다시 그리지 않음 — `row-alert` 클래스도 status
+갱신 시 같이 toggle).
+
+`static/js/realtime.js`(3개 페이지 공통 로드)에 두 이벤트 핸들러를
+추가했다:
+
+```js
+socket.on('robot_sensor_update', (data) => {
+  if (typeof updateRobotRow === 'function') {
+    updateRobotRow(data.robot_id, data.battery_level, data.joint_wear, data.status);
+  }
+});
+socket.on('robot_maintenance', (data) => {
+  if (typeof updateRobotRow === 'function') {
+    updateRobotRow(data.robot_id, null, data.joint_wear, null);
+  }
+});
+```
+
+`updateRobotRow`는 `main.js`(index.html 전용)에만 정의돼 있고
+`realtime.js`는 errors.html/worklogs.html에서도 로드되므로,
+`typeof === 'function'` 가드 없이 그냥 호출하면 그 두 페이지에서
+`ReferenceError`가 난다 — realtime.js가 3페이지 공통이라는 구조(1절
+주석)에서 나오는 필연적인 가드다.
+
+### 19.3 검증
+
+Docker 컨테이너(18장 스택)에서 그대로 검증했다.
+
+- `POST /api/maintenance` (robot_id=1) → 201, `Maintenance`에 신규 행
+  INSERT 확인
+- 직후 `SELECT ... FROM Robot WHERE robot_id=1` → `joint_wear`가 0으로
+  바뀐 것을 DB 조회로 확인
+- `GET /api/maintenance/robot/1` → 방금 등록한 건 + 기존 더미데이터 3건
+  포함 총 4건, 최근순 정렬 확인
+- 프론트 쪽(`updateRobotRow` 호출, 소켓 이벤트 payload 필드명 일치)은
+  코드 검토와 이벤트 페이로드 대조로 확인했고, 실제 브라우저 화면에서
+  행이 갱신되는 모습은 이번엔 눈으로 직접 보지 못했다 — 사용 중인 도구로는
+  브라우저를 띄워 스크린샷을 뜰 수 없었다는 한계를 그대로 남겨둔다.
+
+### 19.4 결정 — MQTT 파이프라인을 Render 배포에는 연결하지 않는다
+
+14.9절 확장 방향을 다시 훑으며 "지금 로컬 전용인 MQTT를 실제 배포
+(Render)에도 연결할지"를 판단했다. 연결하지 않기로 결정했다 — 이유:
+
+- **연결할 브로커가 없다.** Render는 관리형 MQTT 브로커를 제공하지 않고,
+  지금 브로커는 로컬 Mosquitto(Windows 서비스 또는 18장의 Docker
+  컨테이너)뿐이다. Render 앱이 붙으려면 별도의 상시 가동 브로커(예:
+  HiveMQ Cloud/EMQX Cloud 같은 외부 관리형 서비스)를 새로 계약/구성해야
+  하는데, 이건 "기존 스택을 감싸는" 수준을 넘어서는 별도 인프라 결정이다.
+- **발행자가 없다.** `scripts/mqtt_sensor_simulator.py`는 개발자 로컬
+  PC에서 수동으로 실행하는 데모용 스크립트다. Render에 구독자(브리지)만
+  연결해봤자, 실제로 그 브로커에 값을 발행하는 주체가 없으면 "빈 브로커에
+  물린 연결 하나"만 늘어날 뿐 기능적 이득이 없다.
+- **gunicorn 멀티워커와 안 맞는다.** 17장에서 `python app.py`(단일
+  프로세스, reloader 자식 하나)를 전제로 "정확히 한 번만 구독 시작"하도록
+  `WERKZEUG_RUN_MAIN` 가드를 짰다. gunicorn은 워커를 여러 개 띄우는 게
+  기본이라, 그대로 옮기면 워커 수만큼 브로커에 중복 구독하는 문제가 새로
+  생긴다 — 이것도 별도로 풀어야 할 설계 과제다.
+
+8장에서 "Locust로 실측한 뒤에야 페이지네이션을 도입했다"는 태도(14.9절
+"왜 이 순서인가"에도 동일하게 적혀 있음)와 같은 결로, 아직 실측되지 않은
+필요성 때문에 브로커 인프라 계약·멀티워커 중복구독 문제를 미리 떠안는
+것보다는, "로컬/컨테이너에서 아키텍처를 검증한다"는 지금 범위를 정확히
+지키는 쪽이 더 성숙한 판단이라고 본다. 이 결정 자체가 바뀌는 조건은
+명확하다 — 실제 하드웨어 센서가 생기거나, 상시 가동 브로커를 둘 이유가
+생기는 시점.
+
+### Git 커밋
+
+```bash
+git add dao/maintenance_dao.py dao/robot_dao.py service/maintenance_service.py \
+        routes/maintenance.py app.py static/js/main.js static/js/realtime.js \
+        docs/DEVLOG.md
+git commit -m "정비(Maintenance) 등록 API 추가 + joint_wear 초기화, robot_sensor_update/robot_maintenance 프론트 실시간 반영"
+git push
+```

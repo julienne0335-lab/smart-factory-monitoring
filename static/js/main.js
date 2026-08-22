@@ -141,6 +141,7 @@ function renderRobotTable(robots) {
   robots.forEach(function (robot) {
     const isError = robot.is_alert;
     const row = document.createElement('tr');
+    row.dataset.robotId = robot.robot_id;   // realtime.js가 소켓 이벤트로 이 행을 찾아 갱신할 때 씀
 
     if (isError) {
       row.classList.add('row-alert');
@@ -150,12 +151,44 @@ function renderRobotTable(robots) {
       '<td>' + robot.robot_id + '</td>' +
       '<td>' + robot.model_name + '</td>' +
       '<td>' + robot.line_id + '</td>' +
-      '<td>' + robot.battery_level + '%</td>' +
-      '<td>' + robot.joint_wear + '%</td>' +
-      '<td>' + robot.status + (isError ? ' ⚠️' : '') + '</td>';
+      '<td class="cell-battery">' + robot.battery_level + '%</td>' +
+      '<td class="cell-wear">' + robot.joint_wear + '%</td>' +
+      '<td class="cell-status">' + robot.status + (isError ? ' ⚠️' : '') + '</td>';
 
     tableBody.appendChild(row);
   });
+}
+
+
+/**
+ * realtime.js가 'robot_sensor_update'/'robot_maintenance' 소켓 이벤트를
+ * 받았을 때 호출하는 함수. 지금 화면에 그 robot_id 행이 보이고 있으면
+ * (검색/페이지 조건에 안 걸려 있으면) 배터리/마모도/상태 셀만 갱신한다
+ * — 매번 전체 목록을 다시 불러오지 않아도 되게 하기 위함.
+ *
+ * battery/wear/status는 각각 없을 수 있다(예: robot_maintenance는
+ * joint_wear만 보냄) — 넘어온 값만 갱신하고 나머지는 그대로 둔다.
+ */
+function updateRobotRow(robotId, battery, wear, status) {
+  const row = document.querySelector('#robot-table-body tr[data-robot-id="' + robotId + '"]');
+  if (!row) return;   // 현재 화면에 없는 로봇이면 무시 (다음 검색/새로고침 때 반영됨)
+
+  if (battery !== undefined && battery !== null) {
+    const cell = row.querySelector('.cell-battery');
+    if (cell) cell.textContent = battery + '%';
+  }
+
+  if (wear !== undefined && wear !== null) {
+    const cell = row.querySelector('.cell-wear');
+    if (cell) cell.textContent = wear + '%';
+  }
+
+  if (status) {
+    const isError = status === '오류정지';
+    const cell = row.querySelector('.cell-status');
+    if (cell) cell.textContent = status + (isError ? ' ⚠️' : '');
+    row.classList.toggle('row-alert', isError);
+  }
 }
 
 

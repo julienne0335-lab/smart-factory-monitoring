@@ -21,6 +21,7 @@ from auth import login_required   # 10단계: 로그인 확인 데코레이터
 from routes.robot import robot_bp
 from routes.worklog import worklog_bp
 from routes.error import error_bp
+from routes.maintenance import maintenance_bp
 from routes.admin import admin_bp   # 10단계: 로그인/로그아웃
 
 load_dotenv()  # db.py에서도 호출하지만, SECRET_KEY는 여기서 바로 써야 해서 한 번 더 호출
@@ -57,6 +58,7 @@ def create_app():
     app.register_blueprint(robot_bp, url_prefix='/api')
     app.register_blueprint(worklog_bp, url_prefix='/api')
     app.register_blueprint(error_bp, url_prefix='/api')
+    app.register_blueprint(maintenance_bp, url_prefix='/api')
     app.register_blueprint(admin_bp)   # /login, /logout — prefix 없이 루트에 등록
 
     @app.route('/')

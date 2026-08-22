@@ -91,6 +91,22 @@
       console.log('새 에러 알림 수신:', data);
       addNotification(data);
     });
+
+    // robot_service.apply_sensor_reading()의 socketio.emit('robot_sensor_update', ...) 수신
+    // (14.2절 MQTT 확장) — main.js가 로드된 페이지(index.html)에서만 로봇 테이블 행을 갱신함
+    socket.on('robot_sensor_update', (data) => {
+      if (typeof updateRobotRow === 'function') {
+        updateRobotRow(data.robot_id, data.battery_level, data.joint_wear, data.status);
+      }
+    });
+
+    // maintenance_service.create_maintenance()의 socketio.emit('robot_maintenance', ...) 수신
+    // — 정비 등록으로 joint_wear가 0으로 초기화됐을 때도 같은 방식으로 반영
+    socket.on('robot_maintenance', (data) => {
+      if (typeof updateRobotRow === 'function') {
+        updateRobotRow(data.robot_id, null, data.joint_wear, null);
+      }
+    });
   }
 
   // -------------------------------------------------------------------

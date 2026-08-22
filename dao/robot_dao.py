@@ -261,6 +261,30 @@ def update_robot_sensors(robot_id, battery_level, joint_wear):
         conn.close()
 
 
+# ── 정비(Maintenance) 등록 시 마모도 초기화 ─────────────────────────
+
+def reset_joint_wear(robot_id):
+    """
+    정비 완료로 joint_wear(관절 마모도)를 0으로 초기화한다.
+    - battery_level은 건드리지 않으므로 battery_status_update 트리거가
+      끼어들어 status를 덮어쓰지 않는다 (14.2절 확장에서 같은 이유로
+      확인된 패턴).
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE Robot SET joint_wear = 0 WHERE robot_id = %s",
+            (robot_id,),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_factory_id_by_robot(robot_id):
     """
     로봇이 소속된 공장(factory_id)을 조회한다.
