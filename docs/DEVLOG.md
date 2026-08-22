@@ -1292,3 +1292,130 @@ git add dao/worklog_dao.py dao/productiontarget_dao.py \
 git commit -m "불량률 통계 + 목표 생산량 대비 달성률 API 추가 (MES-lite 확장)"
 git push
 ```
+
+---
+
+## 22. 확장 5 — InfluxDB 시계열 이력 도입 (2026-08-22)
+
+14.9절 우선순위표의 4순위(시계열DB 도입)를 진행한 기록이다. 이전 확장들
+(17~21장)보다 한 단계 무겁다고 미리 안내해둔 작업이었는데, 실제로 손댄
+이유는 "MariaDB의 UPDATE가 이전 값을 덮어써서 지운다"는, 관계형 DB로는
+근본적으로 못 푸는 문제였기 때문이다 — 17장에서 만든 MQTT 파이프라인이
+`robot_dao.update_robot_sensors()`로 매초 배터리/마모도를 갱신할 때마다
+직전 값은 그냥 사라진다. "배터리가 시간에 따라 어떻게 변해왔는지" 그래프를
+그리려면 애초에 이력을 남겨야 하는데, 그건 RDBMS가 아니라 시계열DB의
+일이다.
+
+### 22.1 결정 — MariaDB 컬럼을 남길지, 시계열DB로 완전히 옮길지
+
+사용자에게 직접 물어 **하이브리드**로 결정했다:
+
+- **하이브리드 (채택)**: `Robot.battery_level`/`joint_wear`(MariaDB)는
+  지금처럼 "현재값" 스냅샷으로 그대로 둔다 — `battery_status_update`
+  트리거(5·10·15장에서 다듬어온 그 트리거)가 여전히 이 컬럼을 보고
+  상태를 재계산한다. InfluxDB는 "언제 몇 %였는지"의 **이력만 추가로**
+  쌓는다. 기존 트리거·API·스키마를 전혀 안 건드리는 순수 추가(additive)
+  확장.
+- **완전 이전 (기각)**: MariaDB에서 두 컬럼을 아예 없애고 "현재값"도
+  InfluxDB의 최신 포인트로 조회. `battery_status_update`가 같은 테이블
+  UPDATE에서 `NEW.컬럼`을 보고 상태를 재계산하는 지금 구조 자체가
+  성립하지 않아서, 상태 전환 로직을 애플리케이션 레벨로 다시 설계해야
+  한다 — 5·10·15장에 걸쳐 다듬어온 트리거 계보 전체를 재작업하는
+  범위라 이번 확장의 실익 대비 리스크가 크다고 판단해 기각.
+
+이 결정 덕분에 이번 확장은 기존 코드를 "고치는" 게 아니라 "옆에 새로
+붙이는" 작업이 됐다 — `apply_sensor_reading()`이 이미 하던 일(DAO 반영 →
+공장 조회 → emit) 다음에 한 단계만 추가하면 된다.
+
+### 22.2 InfluxDB 개념 대응 — "태그 = WHERE 조건, 필드 = 값"
+
+MariaDB만 다뤄본 상태에서 InfluxDB의 태그(tag)/필드(field) 구분이 헷갈릴
+수 있어 정리해둔다:
+
+- **태그**(`robot_id`, `line_id`, `factory_id`): 인덱싱되어 빠르게
+  필터링/그룹핑할 수 있는 메타데이터. SQL의 `WHERE`/`GROUP BY` 대상
+  컬럼과 같은 역할. 문자열로만 저장된다.
+- **필드**(`battery_level`, `joint_wear`): 실제 측정값. 인덱싱되지 않고,
+  집계(`mean`/`max`) 대상이 된다. SQL의 나머지 컬럼과 같은 역할.
+- **measurement**(`robot_sensor`): SQL의 테이블 이름과 같은 개념.
+
+`dao/timeseries_dao.py`의 `write_sensor_reading()`/`query_sensor_history()`가
+이 구분을 그대로 코드에 옮긴 것이다.
+
+### 22.3 변경/추가 파일
+
+| 파일 | 내용 |
+|---|---|
+| `dao/timeseries_dao.py` (신규) | InfluxDB 클라이언트 래퍼. `write_sensor_reading()`, `query_sensor_history()`. `INFLUX_URL` 미설정 시 클라이언트를 아예 안 만들고 조용히 no-op |
+| `service/robot_service.py` | `apply_sensor_reading()`에 시계열 기록 한 줄 추가, 신규 `get_sensor_history()`(range 화이트리스트 검증 포함) |
+| `routes/robot.py` | `GET /api/robots/<id>/sensor_history?range=1h` 추가 |
+| `docker-compose.yml` | `influxdb` 서비스(influxdb:2) 추가, app 서비스에 `INFLUX_*` 환경변수 + `depends_on` 추가 |
+| `requirements.txt` | `influxdb-client` 추가 |
+| `scripts/docker_smoke_test.py` | influxdb 컨테이너 확인 + `sensor_history` 엔드포인트 200 확인 추가 |
+| `tests/test_robot_service.py` | 시계열 기록 호출 검증 2건 + `get_sensor_history()` 검증 3건(정상 경로, range 검증 통과, **Flux 인젝션 방어**) 추가 |
+| `README.md` | Docker 스택 절 갱신(컨테이너 4개), 로컬 단독 InfluxDB 실행 방법 추가 |
+
+### 22.4 발견/방어한 문제 — range 쿼리 파라미터의 Flux 인젝션
+
+`query_sensor_history()`는 조회 기간(`range(start: ...)`)을 Flux 쿼리
+문자열에 f-string으로 직접 꽂아 넣는다. `robot_id`는 Flask 라우트의
+`<int:robot_id>` 컨버터가 이미 정수로 강제하므로 안전하지만, `range` 값은
+`request.args.get('range', '1h')`로 그대로 받은 사용자 입력이다. 검증 없이
+그대로 dao까지 흘려보내면 `range=1h) |> drop(columns: ["_value"]) //` 같은
+값으로 원래 쿼리를 조기 종료시키고 임의의 Flux 코드를 이어붙이는 인젝션이
+된다(SQL 인젝션의 Flux 버전).
+
+`robot_service.get_sensor_history()`에서 `^\d{1,4}[smhdw]$` 화이트리스트
+정규식으로 막았다 — 숫자 1~4자리 + 단위 문자 1개(초/분/시/일/주)만 통과,
+그 외에는 조용히 기본값 `"1h"`로 대체한다(잘못된 range는 400을 내기보다
+"조회 파라미터니 관대하게 기본값 처리" 쪽을 택함 — 조회 실패보다 사용자
+경험을 우선). `tests/test_robot_service.py`의
+`test_malicious_range_falls_back_to_default`가 위 인젝션 문자열 그대로를
+입력해 `-1h`로 대체되는지 고정해뒀고, 실제 Docker 스택에서도 같은 문자열로
+호출해 정상적으로 기본값 처리되는 것까지 확인했다.
+
+### 22.5 검증 (2026-08-22, Docker 스택 기준)
+
+`docker compose up -d --build`로 기존 db/mosquitto 컨테이너가 떠 있던
+스택에 app+influxdb를 새로 얹었다.
+
+- `docker compose ps` — db/mosquitto/influxdb/app 4개 컨테이너 전부
+  `running` 확인
+- `scripts/docker_smoke_test.py` 전체 통과(컨테이너 4개 확인 + 기존
+  라우트 + `sensor_history` 신규 확인 포함)
+- `python scripts/mqtt_sensor_simulator.py`를 8초간 실행 → `GET
+  /api/robots/1/sensor_history?range=5m` → 실제로 기록된 포인트
+  (`battery_level: 86.0, joint_wear: 21.0`) 확인 — MQTT 시뮬레이터 →
+  `mqtt_bridge.py` → `apply_sensor_reading()` → InfluxDB 기록 → API 조회
+  전체 파이프라인이 실제로 왕복함
+- `range=99999x`(화이트리스트 밖 값) 호출 → 200 + 정상 데이터(기본값
+  `1h`로 조용히 대체됐음을 확인) — 에러도, 빈 결과도 아님
+- 앱 컨테이너 로그에 InfluxDB 관련 에러/예외 없음
+- `INFLUX_URL`을 지운 로컬(비-Docker) 환경에서 `write_sensor_reading()`/
+  `query_sensor_history()` 직접 호출 → 예외 없이 조용히 no-op(빈 리스트)
+  확인 — MQTT 브로커가 없어도 앱이 안 죽는다는 17장의 원칙과 동일하게,
+  InfluxDB가 없어도 센서 반영 파이프라인(DB 갱신 + socketio emit)은
+  영향받지 않는다
+- `pytest tests/` 49개 전체 통과(기존 44개 + 이번 5개)
+
+### 22.6 알려진 한계 / 다음 작업
+
+- 시계열 조회 API(`sensor_history`)는 아직 프론트에 그래프로 붙어있지
+  않다 — 지금은 API만 존재. 프론트 트렌드 차트는 이번 범위 밖.
+  (`realtime.js`에 추가할지는 다음 판단)
+- `INFLUX_TOKEN`을 docker-compose.yml에 평문으로 하드코딩했다 — `db`
+  서비스의 `MARIADB_ROOT_PASSWORD` 하드코딩과 동일한 전례를 따른 것으로,
+  이 스택 전체가 "로컬 검증용"이라는 원래 취지(12장) 안에서는 문제없지만
+  실제 배포 환경에 그대로 가져가면 안 된다.
+- 다음 작업은 5순위(이상탐지 ML) — 이번에 쌓기 시작한 시계열 데이터가
+  그 학습 데이터의 기반이 될 수 있다는 점에서 순서상 자연스럽게 이어진다.
+
+### Git 커밋
+
+```bash
+git add dao/timeseries_dao.py service/robot_service.py routes/robot.py \
+        docker-compose.yml requirements.txt scripts/docker_smoke_test.py \
+        tests/test_robot_service.py README.md docs/DEVLOG.md
+git commit -m "InfluxDB 시계열 이력 도입 — 로봇 센서 배터리/마모도 추이 저장 (4순위 확장)"
+git push
+```

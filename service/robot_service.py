@@ -6,9 +6,15 @@
 # =============================================================================
 
 import math
+import re
 
-from dao import robot_dao, worklog_dao
+from dao import robot_dao, worklog_dao, timeseries_dao
 from extensions import socketio
+
+# range 쿼리 파라미터 화이트리스트: 숫자 1~4자리 + 단위 1글자(s/m/h/d/w)만 허용.
+# timeseries_dao.query_sensor_history()가 이 값을 그대로 Flux 쿼리 문자열에
+# 꽂아 넣으므로, 여기서 걸러내지 않으면 Flux 인젝션이 된다.
+_SENSOR_HISTORY_RANGE_PATTERN = re.compile(r'^\d{1,4}[smhdw]$')
 
 
 def get_all_robots():
@@ -155,5 +161,31 @@ def apply_sensor_reading(robot_id, battery_level, joint_wear):
         "status": robot['status'],
     }
 
+    # 14.9절 4순위 확장: 트리거가 반영한 "현재값"과 별개로, 이 시점의 값을
+    # 시계열로도 남긴다 (InfluxDB가 설정돼 있지 않으면 조용히 건너뜀).
+    timeseries_dao.write_sensor_reading(
+        robot_id, robot['line_id'], factory_id,
+        robot['battery_level'], robot['joint_wear'],
+    )
+
     socketio.emit('robot_sensor_update', payload, room=f"factory_{factory_id}")
     return payload
+
+
+def get_sensor_history(robot_id, range_param="1h"):
+    """
+    로봇 1대의 배터리/관절마모 시계열 이력을 조회한다.
+
+    [파라미터]
+      robot_id    (int): 조회할 로봇
+      range_param (str): 쿼리 파라미터로 받은 상대 기간 (예: "1h", "30m", "7d").
+                          화이트리스트 정규식에 안 맞으면 기본값 "1h"로 대체한다
+                          (routes 계층에서 검증되지 않은 사용자 입력을 그대로
+                          넘길 수 있으므로, Flux 쿼리에 꽂히기 전 여기서 막는다).
+
+    [반환값]
+      list of dict — InfluxDB가 설정돼 있지 않으면 빈 리스트 (에러 아님)
+    """
+    if not _SENSOR_HISTORY_RANGE_PATTERN.fullmatch(range_param):
+        range_param = "1h"
+    return timeseries_dao.query_sensor_history(robot_id, f"-{range_param}")

@@ -122,3 +122,20 @@ def search_robots():
 
     result = robot_service.search_robots(page=page, per_page=per_page, **filters)
     return jsonify(result)
+
+
+# -----------------------------------------------------------------------------
+# GET /robots/<robot_id>/sensor_history?range=1h
+# 14.9절 4순위 확장: 로봇 1대의 배터리/관절마모 시계열 이력 조회 (InfluxDB)
+# -----------------------------------------------------------------------------
+@robot_bp.route('/robots/<int:robot_id>/sensor_history')
+def get_robot_sensor_history(robot_id):
+    """
+    - range: 상대 기간(예: 1h, 30m, 7d). 기본 1h. 잘못된 형식이면 service에서
+      기본값으로 대체한다 (400을 내지 않음 — 조회용 파라미터라 관대하게 처리).
+    - InfluxDB가 로컬에 없으면(4순위 확장을 아직 안 띄운 개발 환경) 빈
+      리스트를 그대로 반환한다 — 404/500이 아니라 "이력이 없다"로 취급.
+    """
+    range_param = request.args.get('range', '1h')
+    history = robot_service.get_sensor_history(robot_id, range_param)
+    return jsonify(history)

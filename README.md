@@ -76,7 +76,7 @@ python scripts/mqtt_sensor_simulator.py
 트리거가 로봇 상태를 자동으로 `충전중`으로 바꾸고, `robot_sensor_update` 소켓
 이벤트가 해당 공장 room으로 실시간 전파됩니다.
 
-### (선택) Docker로 한 번에 실행 (앱 + MariaDB + Mosquitto)
+### (선택) Docker로 한 번에 실행 (앱 + MariaDB + Mosquitto + InfluxDB)
 
 로컬에 MariaDB/Mosquitto를 직접 설치하지 않고, docker-compose로 전체 스택을
 한 번에 띄울 수 있습니다.
@@ -112,6 +112,34 @@ python scripts/mqtt_sensor_simulator.py
 앱 컨테이너는 프로젝트 폴더를 그대로 마운트하므로 코드를 수정하면 (Werkzeug
 reloader가) 자동 반영됩니다.
 
+### (선택) 센서 이력 조회 (InfluxDB, 14.9절 4순위 확장)
+
+MQTT로 반영되는 배터리/관절마모 값은 MariaDB(Robot 테이블)에 "현재값"으로
+갱신되는 것과 별개로, InfluxDB에도 시계열 이력으로 쌓입니다. Docker 스택을
+쓰면 자동으로 붙어 있어 별도 설정이 필요 없습니다:
+
+```bash
+curl "http://localhost:5000/api/robots/1/sensor_history?range=1h"
+```
+
+`range`는 Flux 상대 기간 문법(`30m`/`1h`/`7d` 등)입니다. `python app.py`로
+Docker 없이 로컬에서 돌리는 경우, `.env`에 `INFLUX_URL`을 채우지 않으면
+이 기능은 그냥 빈 리스트를 반환합니다(에러 아님) — 로컬에 InfluxDB를
+따로 띄우고 싶다면:
+
+```bash
+docker run -d --name influxdb -p 8086:8086 \
+  -e DOCKER_INFLUXDB_INIT_MODE=setup \
+  -e DOCKER_INFLUXDB_INIT_USERNAME=admin \
+  -e DOCKER_INFLUXDB_INIT_PASSWORD=<임의의 8자 이상 비밀번호> \
+  -e DOCKER_INFLUXDB_INIT_ORG=smart_factory \
+  -e DOCKER_INFLUXDB_INIT_BUCKET=sensor_readings \
+  -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=<임의의 토큰 문자열> \
+  influxdb:2
+# .env에 INFLUX_URL=http://localhost:8086, INFLUX_TOKEN=<위와 동일>,
+# INFLUX_ORG=smart_factory, INFLUX_BUCKET=sensor_readings 추가
+```
+
 ## 테스트
 
 ```bash
@@ -119,7 +147,7 @@ pip install -r requirements-test.txt
 pytest tests/          # service 계층 단위 테스트 (DB 없이, DAO/socketio는 Mock)
 ```
 
-Docker 스택을 띄운 상태라면, 컨테이너 3개가 실제로 붙어서 동작하는지
+Docker 스택을 띄운 상태라면, 컨테이너 4개가 실제로 붙어서 동작하는지
 (DB 초기화, API 왕복까지) 확인하는 스모크 테스트도 있습니다:
 
 ```bash

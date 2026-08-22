@@ -213,3 +213,80 @@ class TestApplySensorReading:
             {"robot_id": 1, "battery_level": 18, "joint_wear": 42, "status": "충전중"},
             room="factory_3",
         )
+
+    @patch("service.robot_service.timeseries_dao")
+    @patch("service.robot_service.socketio")
+    @patch("service.robot_service.robot_dao")
+    def test_writes_timeseries_point_with_current_snapshot_values(
+        self, mock_dao, mock_socketio, mock_timeseries
+    ):
+        """
+        14.9절 4순위 확장: 트리거가 반영한 "현재값"(재조회 결과)을 그대로
+        시계열에도 남겨야 한다 — MQTT가 보낸 원본 값(18.4)이 아니라 DB에
+        저장된 값(18, INT 컬럼이라 반올림됨)을 써야 트리거 반영 결과와
+        시계열 이력이 어긋나지 않는다.
+        """
+        mock_dao.get_robot_by_id.return_value = _robot(
+            "충전중", robot_id=1, line_id=2, battery_level=18, joint_wear=42
+        )
+        mock_dao.get_factory_id_by_robot.return_value = 3
+
+        robot_service.apply_sensor_reading(robot_id=1, battery_level=18.4, joint_wear=42.1)
+
+        mock_timeseries.write_sensor_reading.assert_called_once_with(1, 2, 3, 18, 42)
+
+    @patch("service.robot_service.timeseries_dao")
+    @patch("service.robot_service.socketio")
+    @patch("service.robot_service.robot_dao")
+    def test_skips_timeseries_write_when_robot_not_found(
+        self, mock_dao, mock_socketio, mock_timeseries
+    ):
+        mock_dao.get_robot_by_id.return_value = None
+
+        robot_service.apply_sensor_reading(robot_id=999, battery_level=50, joint_wear=10)
+
+        mock_timeseries.write_sensor_reading.assert_not_called()
+
+
+# =============================================================================
+# get_sensor_history() — 14.9절 4순위 확장 (InfluxDB 시계열 이력 조회)
+# =============================================================================
+
+class TestGetSensorHistory:
+    """
+    [핵심 검증 포인트 — range 파라미터 화이트리스트]
+      timeseries_dao.query_sensor_history()는 이 값을 그대로 Flux 쿼리
+      문자열에 꽂아 넣으므로(dao/timeseries_dao.py 참고), service 계층이
+      숫자+단위 형식이 아닌 값을 걸러내지 못하면 Flux 인젝션이 된다.
+    """
+
+    @patch("service.robot_service.timeseries_dao")
+    def test_valid_range_passed_through_with_minus_prefix(self, mock_timeseries):
+        mock_timeseries.query_sensor_history.return_value = []
+
+        robot_service.get_sensor_history(robot_id=1, range_param="30m")
+
+        mock_timeseries.query_sensor_history.assert_called_once_with(1, "-30m")
+
+    @patch("service.robot_service.timeseries_dao")
+    def test_malicious_range_falls_back_to_default(self, mock_timeseries):
+        """Flux 인젝션을 시도하는 값은 기본값(1h)으로 대체돼야 한다"""
+        mock_timeseries.query_sensor_history.return_value = []
+
+        robot_service.get_sensor_history(
+            robot_id=1, range_param='1h) |> drop(columns: ["_value"]) //'
+        )
+
+        mock_timeseries.query_sensor_history.assert_called_once_with(1, "-1h")
+
+    @patch("service.robot_service.timeseries_dao")
+    def test_returns_dao_result_directly(self, mock_timeseries):
+        mock_timeseries.query_sensor_history.return_value = [
+            {"time": "2026-08-22T00:00:00", "battery_level": 80.0, "joint_wear": 10.0}
+        ]
+
+        result = robot_service.get_sensor_history(robot_id=1, range_param="1h")
+
+        assert result == [
+            {"time": "2026-08-22T00:00:00", "battery_level": 80.0, "joint_wear": 10.0}
+        ]

@@ -94,7 +94,7 @@ def check_containers():
         row = json.loads(line)
         services[row["Service"]] = row
 
-    for name in ("db", "mosquitto", "app"):
+    for name in ("db", "mosquitto", "influxdb", "app"):
         row = services.get(name)
         check(f"{name} 컨테이너가 떠 있음 (docker compose up -d 실행했는지 확인)",
               row is not None and row.get("State") == "running")
@@ -134,11 +134,24 @@ def check_maintenance_roundtrip():
     check(f"GET /api/maintenance/robot/1 → 방금 등록한 maint_id={maint_id} 포함", found)
 
 
+def check_sensor_history_api():
+    """
+    14.9절 4순위 확장: InfluxDB가 비어 있어도(시뮬레이터를 안 돌린 상태)
+    500/404가 아니라 200 + 빈 리스트가 정상 응답이어야 한다 — 파이프라인이
+    죽지 않는다는 게 이 스모크 테스트의 요점이지, 이력이 실제로 쌓여있는지는
+    확인 대상이 아니다(그건 mqtt_sensor_simulator.py를 돌려야 생김).
+    """
+    status, body = http_request("GET", "/api/robots/1/sensor_history?range=1h")
+    check("GET /api/robots/1/sensor_history → 200 + 리스트 (InfluxDB 연결 확인)",
+          status == 200 and isinstance(body, list))
+
+
 def main():
     check_containers()
     check_app_responds()
     check_robots_api()
     check_maintenance_roundtrip()
+    check_sensor_history_api()
 
     print()
     if FAILURES:

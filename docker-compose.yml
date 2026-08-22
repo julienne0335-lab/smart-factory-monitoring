@@ -30,6 +30,28 @@ services:
     ports:
       - "127.0.0.1:1883:1883"
 
+  influxdb:
+    # 14.9절 4순위 확장: 로봇 센서(배터리/관절마모) 시계열 이력 저장소.
+    # MariaDB의 Robot.battery_level/joint_wear(현재값 스냅샷)는 그대로 두고,
+    # "언제 몇 %였는지"의 이력만 여기에 추가로 쌓는다 — 순수 추가(additive)
+    # 확장이라 기존 트리거/API는 전혀 안 건드린다 (dao/timeseries_dao.py 참고).
+    image: influxdb:2
+    environment:
+      # 이 스택 전체가 "로컬 검증용"이라는 원래 취지(db 서비스의
+      # MARIADB_ROOT_PASSWORD 하드코딩과 동일한 이유) 그대로, InfluxDB
+      # 초기 설정값도 프로덕션 시크릿이 아니라 개발용 고정값을 그대로 씀.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: smart_factory_docker_pw
+      DOCKER_INFLUXDB_INIT_ORG: smart_factory
+      DOCKER_INFLUXDB_INIT_BUCKET: sensor_readings
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: smart-factory-docker-influx-token
+    volumes:
+      - influx_data:/var/lib/influxdb2
+      - influx_config:/etc/influxdb2
+    ports:
+      - "127.0.0.1:8086:8086"
+
   app:
     build: .
     env_file:
@@ -42,6 +64,10 @@ services:
       DB_NAME: smart_factory
       MQTT_BROKER_HOST: mosquitto
       MQTT_BROKER_PORT: 1883
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_TOKEN: smart-factory-docker-influx-token
+      INFLUX_ORG: smart_factory
+      INFLUX_BUCKET: sensor_readings
       FLASK_RUN_HOST: 0.0.0.0
     volumes:
       - .:/app
@@ -61,6 +87,10 @@ services:
         condition: service_healthy
       mosquitto:
         condition: service_started
+      influxdb:
+        condition: service_started
 
 volumes:
   db_data:
+  influx_data:
+  influx_config:
