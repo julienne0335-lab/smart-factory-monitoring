@@ -16,6 +16,7 @@ services:
       - db_data:/var/lib/mysql
       - ./sql/smart_factory_dump_notrig_final.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./sql/docker-init/02_triggers.sql:/docker-entrypoint-initdb.d/02_triggers.sql:ro
+      - ./sql/docker-init/03_mes_lite.sql:/docker-entrypoint-initdb.d/03_mes_lite.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
