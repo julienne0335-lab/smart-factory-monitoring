@@ -109,4 +109,8 @@ if __name__ == '__main__':
         from mqtt_bridge import start_mqtt_bridge
         start_mqtt_bridge()
 
-    socketio.run(app, debug=DEBUG)
+    # FLASK_RUN_HOST: 기본값 127.0.0.1(로컬 전용, 기존 동작 그대로).
+    # Docker 컨테이너 안에서는 0.0.0.0으로 열어야 호스트 포트 매핑이
+    # 컨테이너까지 도달한다 (docker-compose.yml의 app 서비스에서 설정).
+    HOST = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')
+    socketio.run(app, host=HOST, debug=DEBUG)

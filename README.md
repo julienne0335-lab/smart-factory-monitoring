@@ -72,6 +72,39 @@ python scripts/mqtt_sensor_simulator.py
 트리거가 로봇 상태를 자동으로 `충전중`으로 바꾸고, `robot_sensor_update` 소켓
 이벤트가 해당 공장 room으로 실시간 전파됩니다.
 
+### (선택) Docker로 한 번에 실행 (앱 + MariaDB + Mosquitto)
+
+로컬에 MariaDB/Mosquitto를 직접 설치하지 않고, docker-compose로 전체 스택을
+한 번에 띄울 수 있습니다.
+
+> **주의**: 위 "MQTT 센서 시뮬레이터" 절차대로 로컬에 Mosquitto를 Windows
+> 서비스로 이미 설치했다면, 그 서비스가 `1883` 포트를 점유하고 있어서
+> mosquitto 컨테이너가 못 뜹니다. Docker 스택을 쓰기 전에 서비스 관리자에서
+> "Mosquitto Broker" 서비스를 멈추거나(`Stop-Service mosquitto`, 관리자 권한
+> 필요), 관리자 PowerShell에서 `net stop mosquitto`를 실행하세요. 로컬
+> 서비스로 다시 돌아가려면 `Start-Service mosquitto`로 재시작하면 됩니다.
+
+```bash
+cp .env.docker.example .env.docker
+# .env.docker에 ANTHROPIC_API_KEY, SECRET_KEY 값을 채운다
+# (DB_HOST/MQTT_BROKER_HOST 등은 docker-compose.yml이 서비스명 기준으로 이미 채워줌)
+
+docker compose up --build
+# http://localhost:5000
+```
+
+첫 실행 시 `sql/smart_factory_dump_notrig_final.sql` + `sql/docker-init/02_triggers.sql`이
+MariaDB 컨테이너의 `docker-entrypoint-initdb.d`로 자동 실행되어 스키마·트리거가
+바로 준비됩니다(데이터가 이미 있는 볼륨이면 재실행되지 않음). MQTT 시뮬레이터는
+호스트에서 그대로 실행하면 됩니다(mosquitto 컨테이너가 `127.0.0.1:1883`으로 게시됨):
+
+```bash
+python scripts/mqtt_sensor_simulator.py
+```
+
+앱 컨테이너는 프로젝트 폴더를 그대로 마운트하므로 코드를 수정하면 (Werkzeug
+reloader가) 자동 반영됩니다.
+
 ## 더 자세한 내용
 
 DB 설계 근거(DDL/View/Trigger/Index), Flask 계층 구조, ATM 프로젝트와의 도메인

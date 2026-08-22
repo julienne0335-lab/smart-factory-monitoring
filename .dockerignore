@@ -1,0 +1,31 @@
+# 시크릿/로컬 설정 — 이미지에 절대 포함하지 않음 (docker-compose가 런타임에 주입)
+.env
+.env.*
+!.env.docker.example
+aiven.cnf
+ca.pem
+
+# git / 에디터
+.git
+.gitignore
+.vscode
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.venv/
+
+# 대용량/불필요 — 이미지에 없어도 앱 실행에 지장 없음
+sql/smart_factory_dump_notrig_final.sql
+docs/
+_to_delete/
+tests/
+locustfile.py
+api-tests.http
+requirements-test.txt
+
+# 로컬 산출물
+cookies.txt

@@ -818,3 +818,146 @@ git add mqtt_bridge.py scripts/mqtt_sensor_simulator.py mosquitto/ \
 git commit -m "MQTT 가상 센서 시뮬레이터 추가 (14.2절 확장) — battery_status_update 트리거 연동, rowcount 오판/콘솔 인코딩 크래시 버그 수정"
 git push
 ```
+
+---
+
+## 18. 확장 2 — Docker Compose (전체 스택 컨테이너화, 2026-08-22)
+
+지금까지는 앱(Flask)·DB(MariaDB)·MQTT 브로커(Mosquitto)를 각각 로컬에
+개별 설치해서 실행해야 했습니다(로컬에 Docker가 아예 없는 상태였다는
+건 17장 "환경 준비"에서도 이미 확인한 사실). 이 확장은 세 개를
+docker-compose 하나로 묶어서, 새 환경에서도 `docker compose up` 한
+줄로 전체 스택이 뜨도록 만든 기록입니다.
+
+### 추가한 파일
+
+| 파일 | 내용 |
+|---|---|
+| `Dockerfile` | `python:3.13-slim` 기반, `python app.py`로 실행 |
+| `docker-compose.yml` | app / db(mariadb:11) / mosquitto 3개 서비스 |
+| `mosquitto/mosquitto.docker.conf` (신규) | 컨테이너 네트워크용 브로커 설정 |
+| `sql/docker-init/02_triggers.sql` (신규) | `trigger_setup.sql`을 자동 초기화용으로 변환 |
+| `.env.docker.example` / `.env.docker` | Docker 전용 환경변수 템플릿/실값(gitignore) |
+| `.dockerignore` | 시크릿·대용량 파일을 이미지 빌드 컨텍스트에서 제외 |
+| `app.py` | `FLASK_RUN_HOST` 환경변수 추가 |
+
+### 설계 결정 1 — mosquitto.conf를 그대로 못 쓰는 이유
+
+기존 `mosquitto/mosquitto.conf`는 `listener 1883 127.0.0.1`로 loopback만
+연다(로컬 실행 시 외부 접근을 막기 위한 의도적 설정, 14장 참고). 그런데
+컨테이너 안에서 `127.0.0.1`은 그 컨테이너 자기 자신만 가리키므로, app
+컨테이너가 mosquitto 컨테이너에 서비스명(`mosquitto`)으로 접속하려 하면
+연결이 거부된다. 전역 설정을 고치는 대신 `mosquitto.docker.conf`를 새로
+만들어 `listener 1883 0.0.0.0`으로 컨테이너 내부 네트워크는 열되, 호스트에는
+`127.0.0.1:1883`으로만 게시해서(docker-compose.yml) 외부 노출은 그대로 막았다.
+
+### 설계 결정 2 — trigger_setup.sql을 그대로 initdb.d에 못 넣는 이유
+
+`trigger_setup.sql`은 HeidiSQL이 `DELIMITER`를 이해하지 못해서, 일부러
+DELIMITER 없이 "STEP 블록을 수동으로 드래그해서 F9" 방식으로 작성돼
+있다(15장). 반면 `docker-entrypoint-initdb.d`는 실제 `mysql` 클라이언트로
+파일을 실행하며, 이 클라이언트는 DELIMITER를 정상 지원한다. 그래서 같은
+트리거 4개를 `DELIMITER $$ ... DELIMITER ;`로 감싼 `sql/docker-init/02_triggers.sql`을
+따로 만들었다 — 원본은 HeidiSQL 수동 실행/Aiven 설정용으로 그대로 남겨두고,
+자동화 경로만 별도 파일로 분리한 것. 트리거 로직을 바꿀 때는 두 파일을
+같이 수정해야 한다는 게 이 방식의 유지비용이다.
+
+### 설계 결정 3 — host 바인딩 버그 발견
+
+`app.py`의 `socketio.run(app, debug=DEBUG)`는 host를 넘기지 않아
+Flask-SocketIO 기본값인 `127.0.0.1`로만 열려 있었다. 로컬에서 직접
+`python app.py`로 실행할 땐 문제가 없지만, 컨테이너 안에서 이대로 실행하면
+`127.0.0.1`은 컨테이너 자신만 가리키므로 `docker-compose.yml`의
+`ports: 5000:5000` 매핑이 있어도 호스트에서 접근할 수 없다 — 컨테이너
+내부 프로세스가 모든 인터페이스(`0.0.0.0`)에서 리슨해야 포트 포워딩이
+도달한다. `FLASK_RUN_HOST` 환경변수를 추가해 기본값은 기존과 동일하게
+`127.0.0.1`(로컬 동작 100% 유지)로 두고, `docker-compose.yml`의 app
+서비스에서만 `FLASK_RUN_HOST=0.0.0.0`을 주입해서 해결했다.
+
+### 왜 gunicorn이 아니라 `python app.py`로 실행하는가
+
+17장에서 MQTT 브리지는 `if __name__ == '__main__':` 블록 안에서만
+시작하도록 만들었다(gunicorn으로 뜨는 배포 환경에선 그 블록 자체가
+안 돈다). docker-compose 스택은 "로컬 아키텍처를 전체 다 띄워서
+검증한다"는 이번 확장의 목적과 맞으므로, Dockerfile의 `CMD`도
+`python app.py`로 둬서 MQTT 브리지가 함께 뜨도록 했다. Render 배포용
+gunicorn 실행과는 별개 경로다.
+
+### 환경 준비 — Docker Desktop 설치
+
+이 컴퓨터에는 Docker Desktop이 전혀 없어서 `winget install
+Docker.DockerDesktop`으로 설치했다. 설치 직후 `docker` CLI는 바로
+동작하지만, Docker Desktop 앱(엔진)을 실제로 띄워야 `docker ps`가
+응답한다 — CLI 설치와 엔진 기동은 별개 단계라는 걸 여기서 확인했다.
+
+### 발견한 버그 1 — 포트 1883 충돌 (Windows Mosquitto 서비스와 컨테이너)
+
+`docker compose up` 첫 실행에서 mosquitto 컨테이너가 `bind: Only one
+usage of each socket address...` 에러로 뜨지 못했다. 17장에서 winget으로
+설치한 Mosquitto가 Windows 서비스로 이미 `1883`을 점유하고 있었기 때문 —
+같은 포트를 로컬 서비스와 컨테이너가 동시에 쓸 수 없는 건 당연한
+얘기지만, "로컬에 이미 뭔가 떠 있는 상태에서 그걸 컨테이너로 옮긴다"는
+케이스라 실제로 부딪혀보기 전까진 놓치기 쉬웠다. `Stop-Service mosquitto`
+(관리자 권한 필요)로 기존 서비스를 멈추고 컨테이너가 포트를 쓰도록 했다.
+자동시작 설정 자체는 안 건드렸으니, 재부팅하면 Windows 서비스가 다시 뜨고
+그러면 이번엔 반대로 컨테이너 쪽이 포트 충돌로 못 뜬다 — 둘 중 하나만
+쓰는 게 원칙이라는 걸 README에도 남겨야 함.
+
+### 발견한 버그 2 — Flask-SocketIO가 컨테이너 안에서 실행을 거부함
+
+`docker compose up`으로 app을 띄우자 `RuntimeError: The Werkzeug web
+server is not designed to run in production. Pass
+allow_unsafe_werkzeug=True...`로 즉시 죽었다. 원인을 따라가보니
+`flask_socketio.SocketIO.run()`이 `async_mode='threading'`일 때
+`sys.stdin.isatty()`가 거짓이면 "프로덕션에서 개발 서버를 쓰려는 것
+아니냐"고 판단해 실행 자체를 막는 안전장치였다(`allow_unsafe_werkzeug=True`를
+넘기지 않는 한). 로컬 터미널에서 `python app.py`를 직접 칠 땐 stdin이
+항상 tty라 17장 내내 이 코드 경로를 안전하게 지나쳐왔을 뿐, 컨테이너는
+기본적으로 tty가 없어서 여기서 처음 드러난 문제다. 코드(`allow_unsafe_werkzeug=True`
+하드코딩)를 건드리는 대신 `docker-compose.yml`의 app 서비스에 `tty: true` +
+`stdin_open: true`를 줘서, "로컬 터미널에서 직접 실행하는 것과 똑같은
+조건"을 컨테이너에도 만들어주는 쪽을 택했다 — 실제 프로덕션(Render)은
+gunicorn을 쓰므로 이 코드 경로 자체를 안 타서 영향이 없다.
+
+### 발견한 버그 3 — 테이블명 대소문자 (Linux MariaDB에서만 터짐)
+
+tty 문제를 고치고도 API가 전부 500을 냈다. 원인은 `dao/*.py`와
+`sql/trigger_setup.sql`이 전부 `Robot`/`Line`/`RobotError`처럼 PascalCase로
+테이블을 참조하는데, 실제 덤프 파일의 `CREATE TABLE`은 소문자
+(`robot`/`line`/`roboterror`)로 돼 있다는 것. 로컬 Windows MariaDB와
+Aiven(관리형 MySQL)은 대소문자를 구분하지 않는 설정(`lower_case_table_names`)이라
+지금까지 전혀 문제가 안 됐던 불일치가, 기본이 대소문자 구분인 Linux
+컨테이너에서 처음 드러난 것 — 17장의 콘솔 인코딩 버그와 같은 결로,
+"플랫폼이 바뀌기 전엔 절대 안 보이는" 종류의 버그였다. 코드 수백 곳의
+테이블명을 바꾸는 대신, `db` 서비스에 `command: --lower-case-table-names=1`을
+줘서 로컬/Aiven과 동일한 동작으로 맞췄다(이 옵션은 최초 데이터 초기화
+이전에 적용돼야 하므로, 이미 한 번 잘못된 대소문자로 초기화된 볼륨은
+`docker compose down -v`로 지우고 다시 만들어야 했다).
+
+### 실제 검증 결과 (2026-08-22, Docker 컨테이너 기준)
+
+- `docker compose up -d` → db(healthy) → app 순서로 기동, 세 컨테이너 모두 정상 Running
+- DB 컨테이너 안에서 `SHOW TABLES` / `SELECT COUNT(*) FROM Robot`(225) /
+  `SELECT COUNT(*) FROM WorkLog`(1,000,000) / `SHOW TRIGGERS`(4개 전부) 확인
+- `python -m scripts.insert_dummy_admin`(컨테이너 안에서 실행 — 프로젝트
+  루트가 아니라 `scripts/` 디렉터리 기준으로 `python scripts/insert_dummy_admin.py`를
+  그대로 실행하면 `from db import get_connection`이 `ModuleNotFoundError`를
+  내는 것도 이번에 확인함. `-m` 모듈 실행으로 우회)로 로그인 계정 생성
+- `curl`로 `/login` → 세션 쿠키로 `/`(200) → `/api/robots`(200, 실제 로봇
+  225대 JSON) 순서로 로그인~인증 API 흐름 전체 확인
+- 호스트에서 `python scripts/mqtt_sensor_simulator.py` 실행(Docker
+  mosquitto가 `127.0.0.1:1883`으로 게시돼 있어 그대로 접속됨) →
+  robot_id 1~3의 `battery_level`/`joint_wear`가 8초 만에 실제로 변경된 것을
+  DB 조회로 확인 — 호스트 시뮬레이터 → Docker mosquitto → app 컨테이너의
+  mqtt_bridge → db 컨테이너까지 전체 경로가 로컬에서 그랬던 것과 동일하게
+  동작함을 검증
+
+### Git 커밋
+
+```bash
+git add Dockerfile docker-compose.yml .dockerignore \
+        mosquitto/mosquitto.docker.conf sql/docker-init/02_triggers.sql \
+        .env.docker.example .gitignore app.py README.md docs/DEVLOG.md
+git commit -m "docker-compose로 전체 스택(app+MariaDB+Mosquitto) 컨테이너화, socketio host 바인딩 버그 수정"
+git push
+```

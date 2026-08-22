@@ -1,0 +1,65 @@
+services:
+  db:
+    image: mariadb:11
+    # 코드 전체(dao/*.py, sql/trigger_setup.sql)가 Robot/Line처럼 PascalCase로
+    # 테이블명을 참조하는데, 실제 덤프의 테이블은 소문자(robot/line)로 생성돼
+    # 있다. 로컬 Windows MariaDB/Aiven은 대소문자를 구분하지 않아(기본값 또는
+    # 관리형 DB의 관례적 설정) 지금까지 문제가 없었던 것 — Linux 컨테이너는
+    # 기본이 대소문자 구분이라 여기서 처음 드러난 차이. 코드를 고치는 대신
+    # 서버 설정으로 기존 환경과 동일하게 맞춘다 (반드시 최초 데이터 초기화
+    # 이전에 적용돼야 하므로 command로 서버 시작 옵션에 준다).
+    command: --lower-case-table-names=1
+    environment:
+      MARIADB_DATABASE: smart_factory
+      MARIADB_ROOT_PASSWORD: smart_factory_docker_pw
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./sql/smart_factory_dump_notrig_final.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./sql/docker-init/02_triggers.sql:/docker-entrypoint-initdb.d/02_triggers.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./mosquitto/mosquitto.docker.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      - "127.0.0.1:1883:1883"
+
+  app:
+    build: .
+    env_file:
+      - .env.docker
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: smart_factory_docker_pw
+      DB_NAME: smart_factory
+      MQTT_BROKER_HOST: mosquitto
+      MQTT_BROKER_PORT: 1883
+      FLASK_RUN_HOST: 0.0.0.0
+    volumes:
+      - .:/app
+    # Flask-SocketIO(threading 모드)는 stdin이 tty가 아니면 "프로덕션에서
+    # Werkzeug 서버를 쓰려는 것 아니냐"고 판단해 실행을 거부한다
+    # (flask_socketio/__init__.py의 SocketIO.run). 로컬에서 `python app.py`를
+    # 터미널로 직접 실행할 땐 stdin이 항상 tty라 문제가 없었지만, 컨테이너는
+    # 기본적으로 tty가 없어 여기서 처음 드러났다. 실제 프로덕션 배포(Render)는
+    # gunicorn을 쓰므로 이 코드 경로 자체를 안 타 영향이 없다 — 이 스택은
+    # 로컬 검증용이라는 원래 취지 그대로, tty를 열어서 로컬 실행과 동일하게 맞춘다.
+    tty: true
+    stdin_open: true
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+
+volumes:
+  db_data:

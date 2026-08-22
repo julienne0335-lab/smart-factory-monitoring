@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.aiven.example
+!.env.docker.example
 aiven.cnf
 
 # ── DB 덤프 파일 (용량 크고 실데이터 포함, 저장소에 안 어울림) ──
