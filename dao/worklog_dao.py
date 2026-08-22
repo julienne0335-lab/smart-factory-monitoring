@@ -391,6 +391,123 @@ def get_worklogs_with_details():
         conn.close()
 
 
+def get_defect_rate_by_robot():
+    """
+    로봇별 불량률 통계를 반환한다. (3순위 MES-lite 확장 — result 컬럼 집계)
+
+    [반환값]
+      list of dict: 로봇별 총 작업 건수 + 불량 건수 + 불량률(%)
+      예) [{"robot_id": 1, "total_count": 150, "defect_count": 4,
+            "defect_rate": 2.67}, ...]
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT robot_id,
+                   COUNT(*) AS total_count,
+                   SUM(result = '불량') AS defect_count,
+                   ROUND(SUM(result = '불량') / COUNT(*) * 100, 2) AS defect_rate
+            FROM WorkLog
+            GROUP BY robot_id
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_defect_rate_by_line():
+    """
+    라인별 불량률 통계를 반환한다.
+    - WorkLog에는 line_id가 없어서 Robot 테이블과 JOIN 필요 (get_worklog_stats_by_line()과 동일)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT r.line_id,
+                   COUNT(*) AS total_count,
+                   SUM(w.result = '불량') AS defect_count,
+                   ROUND(SUM(w.result = '불량') / COUNT(*) * 100, 2) AS defect_rate
+            FROM WorkLog w
+            JOIN Robot r ON w.robot_id = r.robot_id
+            GROUP BY r.line_id
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_defect_rate_by_work_type():
+    """작업 유형(work_type)별 불량률 통계를 반환한다."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT work_type,
+                   COUNT(*) AS total_count,
+                   SUM(result = '불량') AS defect_count,
+                   ROUND(SUM(result = '불량') / COUNT(*) * 100, 2) AS defect_rate
+            FROM WorkLog
+            GROUP BY work_type
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+# ── 기간별 집계 (신규 — "기간별 집계 API") ──────────────────────────
+
+_PERIOD_DATE_FORMATS = {
+    'DAILY': '%Y-%m-%d',
+    'WEEKLY': '%x-W%v',    # ISO 연도-주차 (예: 2026-W34)
+    'MONTHLY': '%Y-%m',
+}
+
+
+def get_worklog_period_stats(period_type, start_date, end_date, line_id=None, factory_id=None):
+    """
+    기간(일/주/월) 단위로 버킷팅한 작업 통계를 반환한다.
+
+    [파라미터]
+      period_type (str): 'DAILY' / 'WEEKLY' / 'MONTHLY'
+      start_date, end_date (str): 집계 대상 날짜 범위 (둘 다 필수)
+      line_id, factory_id (int, 선택): 특정 라인/공장으로 좁히기
+
+    [반환값]
+      list of dict: [{"period": "2026-08-20", "total_count": 3200,
+                       "defect_count": 96, "defect_rate": 3.0,
+                       "avg_minutes": 42.1}, ...] (period 오름차순)
+
+    [참고]
+      WHERE절 조립은 search_worklogs()/count_search_worklogs()가 쓰는
+      _build_worklog_search_conditions()를 그대로 재사용한다 (robot_id/
+      work_type/worker_type/min_minutes는 안 쓰므로 None 고정).
+    """
+    date_format = _PERIOD_DATE_FORMATS[period_type]
+    where_clause, from_clause, params = _build_worklog_search_conditions(
+        None, line_id, factory_id, None, None, start_date, end_date, None
+    )
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        query = f"""
+            SELECT DATE_FORMAT(w.started_at, %s) AS period,
+                   COUNT(*) AS total_count,
+                   SUM(w.result = '불량') AS defect_count,
+                   ROUND(SUM(w.result = '불량') / COUNT(*) * 100, 2) AS defect_rate,
+                   AVG(TIMESTAMPDIFF(MINUTE, w.started_at, w.ended_at)) AS avg_minutes
+            {from_clause} {where_clause}
+            GROUP BY period
+            ORDER BY period
+        """
+        cursor.execute(query, [date_format] + params)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
 def get_long_worklogs(min_minutes):
     """
     작업시간이 N분 이상인 작업 기록을 반환한다.

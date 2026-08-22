@@ -12,7 +12,8 @@
   (모두 DB 트리거 기반, 애플리케이션 코드를 거치지 않아도 항상 보장됨)
 - Flask-SocketIO 기반 실시간 알림 (공장 단위 room)
 - Claude API를 활용한 로봇 에러 로그 원인 분석 (개별/배치 모드)
-- 작업 이력(WorkLog) 기반 통계 — 로봇별/라인별/작업유형별 평균 작업시간, 에너지 비용
+- 작업 이력(WorkLog) 기반 통계 — 로봇별/라인별/작업유형별 평균 작업시간, 에너지 비용, 불량률
+- 라인별 기간(일/주/월) 목표 생산량 등록 + 실제 달성률 조회, 기간별(일/주/월) 작업 집계 API (MES-lite)
 - 다중 필터 통합 검색 API + 페이지네이션 (로봇/작업이력/에러 전체)
 - 세션 기반 로그인, 역할(공장장/라인 반장)별 서버 강제 데이터 스코핑
 - (확장) MQTT 가상 센서 시뮬레이터 → 백엔드 실시간 반영 파이프라인 — 하드웨어 없이
@@ -52,6 +53,9 @@ cp .env.example .env
 # DDL / View / Trigger / Index 적용 (docs/ARCHITECTURE.md 3~6장 참고)
 mysql -u root -p smart_factory < schema.sql
 mysql -u root -p smart_factory < sql/trigger_setup.sql
+
+# MES-lite 확장(불량률/목표 생산량) 적용 — 기존 DB에 한 번만 실행
+mysql -u root -p smart_factory < sql/migrate_mes_lite.sql
 
 python app.py   # http://localhost:5000
 ```
@@ -93,10 +97,13 @@ docker compose up --build
 # http://localhost:5000
 ```
 
-첫 실행 시 `sql/smart_factory_dump_notrig_final.sql` + `sql/docker-init/02_triggers.sql`이
-MariaDB 컨테이너의 `docker-entrypoint-initdb.d`로 자동 실행되어 스키마·트리거가
-바로 준비됩니다(데이터가 이미 있는 볼륨이면 재실행되지 않음). MQTT 시뮬레이터는
-호스트에서 그대로 실행하면 됩니다(mosquitto 컨테이너가 `127.0.0.1:1883`으로 게시됨):
+첫 실행 시 `sql/smart_factory_dump_notrig_final.sql` + `sql/docker-init/02_triggers.sql`
++ `sql/docker-init/03_mes_lite.sql`이 MariaDB 컨테이너의 `docker-entrypoint-initdb.d`로
+자동 실행되어 스키마·트리거·MES-lite 확장(불량률/목표 생산량)이 바로 준비됩니다
+(데이터가 이미 있는 볼륨이면 재실행되지 않음 — 이미 만들어둔 볼륨이라면
+`docker compose exec db mysql -u root -p smart_factory < sql/migrate_mes_lite.sql`처럼
+컨테이너 안에서 직접 한 번 적용해야 함). MQTT 시뮬레이터는 호스트에서 그대로
+실행하면 됩니다(mosquitto 컨테이너가 `127.0.0.1:1883`으로 게시됨):
 
 ```bash
 python scripts/mqtt_sensor_simulator.py

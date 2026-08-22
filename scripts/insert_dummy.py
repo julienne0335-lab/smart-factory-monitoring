@@ -112,6 +112,10 @@ work_types = {
 
 worker_types = ['ROBOT', 'HUMAN']
 
+# 3순위 MES-lite 확장: 품질 결과(result). 실제 품질검사 데이터가 없어서
+# sql/migrate_mes_lite.sql의 backfill과 동일하게 임의 3%를 '불량' 처리한다.
+DEFECT_RATE = 0.03
+
 BATCH_SIZE = 10000    # 한 번에 INSERT할 건수
 TOTAL = 1000000       # 총 INSERT할 건수
 
@@ -141,13 +145,15 @@ for batch in range(TOTAL // BATCH_SIZE):   # 0~99, 총 100번 반복
             robot_id,
             work_type,
             random.choice(worker_types),  # ROBOT or HUMAN
+            '불량' if random.random() < DEFECT_RATE else '정상',
             started_at,
             ended_at
         ))
 
     # 1만 건씩 배치 INSERT
     cursor.executemany(
-        "INSERT INTO worklog (robot_id, work_type, worker_type, started_at, ended_at) VALUES (%s, %s, %s, %s, %s)",
+        "INSERT INTO worklog (robot_id, work_type, worker_type, result, started_at, ended_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
         logs
     )
     conn.commit()

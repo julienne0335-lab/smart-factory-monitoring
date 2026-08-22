@@ -215,3 +215,73 @@ def search_worklogs():
 
     result = worklog_service.search_worklogs(page=page, per_page=per_page, **filters)
     return jsonify(result)
+
+
+# =============================================================================
+# 불량률 / 기간별 집계 (3순위 MES-lite 확장)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/stats/defect/robot
+# 로봇별 불량률 통계
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/stats/defect/robot')
+def get_defect_rate_by_robot():
+    """로봇별 불량률 통계를 조회한다. stats/robot과 동일한 패턴, 축만 불량률."""
+    result = worklog_service.get_defect_rate_by_robot()
+    return jsonify(result)
+
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/stats/defect/line
+# 라인별 불량률 통계
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/stats/defect/line')
+def get_defect_rate_by_line():
+    """라인별 불량률 통계를 조회한다."""
+    result = worklog_service.get_defect_rate_by_line()
+    return jsonify(result)
+
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/stats/defect/work_type
+# 작업 유형별 불량률 통계
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/stats/defect/work_type')
+def get_defect_rate_by_work_type():
+    """작업 유형별 불량률 통계를 조회한다."""
+    result = worklog_service.get_defect_rate_by_work_type()
+    return jsonify(result)
+
+
+# -----------------------------------------------------------------------------
+# GET /worklogs/stats/period?period_type=DAILY&start=&end=&line_id=&factory_id=
+# 기간별(일/주/월) 집계 API
+# -----------------------------------------------------------------------------
+@worklog_bp.route('/worklogs/stats/period')
+def get_worklog_period_stats():
+    """
+    기간(일/주/월) 단위로 버킷팅한 작업 통계를 조회한다.
+    - period_type: DAILY / WEEKLY / MONTHLY (필수)
+    - start, end: 집계 대상 날짜 범위 (필수 — 조건 없이 100만 건 전체를
+      그룹핑하는 걸 막기 위해 worklogs/search와 동일하게 강제함)
+    - line_id, factory_id: 선택적으로 특정 라인/공장만 좁혀서 집계
+    - 예: /worklogs/stats/period?period_type=MONTHLY&start=2026-01-01&end=2026-08-31
+    - 응답: [{"period": "2026-01", "total_count": 12000, "defect_count": 360,
+              "defect_rate": 3.0, "avg_minutes": 41.2}, ...]
+    """
+    period_type = request.args.get('period_type')
+    start_date = request.args.get('start')
+    end_date = request.args.get('end')
+    line_id = request.args.get('line_id', type=int)
+    factory_id = request.args.get('factory_id', type=int)
+
+    if period_type not in worklog_service.VALID_PERIOD_TYPES:
+        return jsonify({"message": "period_type은 DAILY/WEEKLY/MONTHLY 중 하나여야 합니다."}), 400
+    if not start_date or not end_date:
+        return jsonify({"message": "start와 end는 필수입니다."}), 400
+
+    result = worklog_service.get_worklog_period_stats(
+        period_type, start_date, end_date, line_id=line_id, factory_id=factory_id
+    )
+    return jsonify(result)

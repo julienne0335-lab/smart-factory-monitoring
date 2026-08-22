@@ -175,3 +175,24 @@ class TestGetLongWorklogs:
 
         assert result[0]["duration_minutes"] is None
         assert result[0]["is_warning"] is False
+
+
+# =============================================================================
+# get_worklog_period_stats() — 기간별 집계 (3순위 MES-lite 확장)
+# =============================================================================
+
+class TestGetWorklogPeriodStats:
+
+    @patch("service.worklog_service.worklog_dao.get_worklog_period_stats")
+    def test_delegates_with_all_filters(self, mock_dao):
+        """line_id/factory_id까지 그대로 dao로 전달되는지 확인"""
+        mock_dao.return_value = [{"period": "2026-08", "total_count": 100}]
+
+        result = worklog_service.get_worklog_period_stats(
+            "MONTHLY", "2026-01-01", "2026-08-31", line_id=2, factory_id=1
+        )
+
+        mock_dao.assert_called_once_with(
+            "MONTHLY", "2026-01-01", "2026-08-31", line_id=2, factory_id=1
+        )
+        assert result == [{"period": "2026-08", "total_count": 100}]

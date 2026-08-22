@@ -120,6 +120,39 @@ def get_worklogs_with_details():
     return [_calculate_duration(log) for log in worklogs]
 
 
+# -----------------------------------------------------------------------------
+# 불량률 / 기간별 집계 (3순위 MES-lite 확장)
+# -----------------------------------------------------------------------------
+
+def get_defect_rate_by_robot():
+    """로봇별 불량률 통계 조회 (이미 집계된 데이터이므로 가공 없이 반환)"""
+    return worklog_dao.get_defect_rate_by_robot()
+
+
+def get_defect_rate_by_line():
+    """라인별 불량률 통계 조회"""
+    return worklog_dao.get_defect_rate_by_line()
+
+
+def get_defect_rate_by_work_type():
+    """작업 유형별 불량률 통계 조회"""
+    return worklog_dao.get_defect_rate_by_work_type()
+
+
+VALID_PERIOD_TYPES = ('DAILY', 'WEEKLY', 'MONTHLY')
+
+
+def get_worklog_period_stats(period_type, start_date, end_date, line_id=None, factory_id=None):
+    """
+    기간(일/주/월) 단위로 버킷팅한 작업 통계를 조회한다.
+    - period_type 유효성 검사는 routes 계층이 담당 (400 응답을 위해)
+    - 이미 집계된 데이터이므로 가공 없이 그대로 반환
+    """
+    return worklog_dao.get_worklog_period_stats(
+        period_type, start_date, end_date, line_id=line_id, factory_id=factory_id
+    )
+
+
 def get_long_worklogs(min_minutes):
     """
     기준 시간 초과 작업 로그 조회 + 작업시간(분) + 경고 플래그 추가

@@ -1147,3 +1147,148 @@ git add tests/test_maintenance_service.py tests/test_robot_service.py \
 git commit -m "정비/센서 반영 유닛 테스트 추가, Docker 스택 스모크 테스트 스크립트 추가"
 git push
 ```
+
+---
+
+## 21. 확장 4 — 불량률 통계 + 목표 생산량 대비 달성률 (MES-lite, 2026-08-22)
+
+14.9절 우선순위표의 3순위(통계·MES-lite 기능 확장)를 진행한 기록이다.
+목표는 "목표 생산량 대비 달성률, 불량률 통계, 기간별 집계 API" 세 가지.
+
+### 21.1 결정 — 기존 데이터로 근사할지, 스키마를 확장할지
+
+WorkLog/Robot/Line/Factory 어디에도 "불량"이나 "목표 생산량"에 대응하는
+컬럼이 없었다. 두 갈래가 있었다:
+
+- **경량형**: 불량률은 RobotError/LineError 발생 건수로 근사, 목표는
+  저장하지 않고 쿼리 파라미터로만 받아 달성률만 계산. 스키마 변경 없음.
+- **본격형**: `WorkLog.result`(정상/불량) 컬럼 추가 + `ProductionTarget`
+  (라인×기간 목표) 테이블 신설. 실제 MES처럼 목표가 DB에 남는다.
+
+사용자에게 직접 물어 본격형으로 결정했다. 대신 "에러 발생 = 불량"으로
+퉁치는 것보다 개념적으로 더 정확하고(에러는 설비/로봇 장애고, 불량은
+품질 결과다), 8·9장에서 만든 `_paginate()`/동적 WHERE절 조립 패턴을 그대로
+재사용할 수 있어 구현 비용도 감당할 만하다고 판단했다.
+
+### 21.2 스키마 변경
+
+```sql
+ALTER TABLE WorkLog
+    ADD COLUMN result ENUM('정상','불량') NOT NULL DEFAULT '정상' AFTER worker_type;
+
+CREATE TABLE ProductionTarget (
+    target_id, line_id, period_type ENUM('DAILY','WEEKLY','MONTHLY'),
+    period_start DATE, target_count INT, created_at,
+    UNIQUE (line_id, period_type, period_start)
+);
+```
+
+`result`는 이 프로젝트에 실제 품질검사 데이터가 없어서, `worklog_dao.py`
+상단의 `WORK_TYPE_POWER_KW`(추정 전력값)와 동일한 원칙으로 처리했다 —
+일반적인 산업용 조립라인 불량률(2~5%대)을 참고해 기존 100만 건에
+`UPDATE WorkLog SET result = IF(RAND() < 0.03, '불량', '정상')`로 임의 3%를
+불량 처리했다(발표/문서에서 추정치임을 밝힐 것). `scripts/insert_dummy.py`도
+앞으로 다시 실행될 경우를 대비해 같은 3% 확률로 result를 채우도록 맞춰뒀다.
+
+두 벌로 관리한다: `sql/migrate_mes_lite.sql`(로컬 개발 DB에 수동 적용,
+`mysql -u root -p smart_factory < ...`)과 `sql/docker-init/03_mes_lite.sql`
+(내용 동일, `02_triggers.sql` 다음 순서로 fresh 볼륨에 자동 적용). 이미
+데이터가 있는 docker 볼륨은 init 스크립트가 재실행되지 않으므로, 그 경우
+컨테이너 안에서 `migrate_mes_lite.sql`을 직접 한 번 실행해야 한다는 점을
+README에 남겨뒀다.
+
+### 21.3 불량률 통계 + 기간별 집계 — `worklog_dao.py`/`worklog_service.py`/`routes/worklog.py`
+
+기존 `get_worklog_stats_by_{robot,line,work_type}()` 3벌 패턴을 그대로
+따라 `get_defect_rate_by_{robot,line,work_type}()`을 추가했다
+(`SUM(result = '불량') / COUNT(*) * 100`).
+
+기간별 집계(`GET /worklogs/stats/period?period_type=&start=&end=&line_id=&factory_id=`)는
+`DATE_FORMAT(started_at, ...)`로 일/주/월 버킷을 만들어 그룹핑한다. WHERE절
+조립은 새로 짜지 않고 `search_worklogs()`가 쓰는
+`_build_worklog_search_conditions()`를 그대로 재사용했다(robot_id/work_type/
+worker_type/min_minutes는 안 쓰므로 None 고정) — 8·9장에서 확립된 "동적
+WHERE절 조립 헬퍼를 search/count가 공유한다"는 패턴의 세 번째 재사용 사례다.
+`worklogs/search`와 동일한 이유로 start/end 날짜 범위를 필수로 강제했다
+(없으면 100만 건 전체를 그룹핑하게 됨).
+
+`stats/robot`, `stats/line`, `stats/work_type`과 마찬가지로 새 통계
+엔드포인트들도 로그인 보호를 걸지 않았다 — 기존 파일의 컨벤션을 그대로
+따른 것이다(`errors/stats/robot`처럼 스코프 누락을 이미 수정해둔 사례가
+있는 반면 `worklogs/stats/*`는 애초에 보호가 없는 상태였는데, 이번 확장의
+범위를 벗어나는 별개의 구멍이라 손대지 않았다 — 다음에 점검할 목록에
+남겨둔다).
+
+### 21.4 목표 생산량 대비 달성률 — 신규 `productiontarget_dao.py`/`production_target_service.py`/`routes/production_target.py`
+
+`maintenance_service.py`가 `maintenance_dao`와 `robot_dao`를 함께 쓰는
+전례를 따라, `production_target_service.py`도 `productiontarget_dao`(자기
+도메인)와 `worklog_dao`(실적 집계)를 함께 사용한다.
+
+```
+POST /api/production-targets   { line_id, period_type, period_start, target_count }
+  → line_id 없으면 404, 있으면 UPSERT(같은 라인/기간 재등록 시 값 덮어씀)
+
+GET  /api/production-targets/line/<line_id>       — 등록된 목표 이력
+GET  /api/production-targets/achievement?line_id=&period_type=&period_start=
+  → 목표 없으면 404
+  → 있으면 {target_count, actual_count, achievement_rate} 계산
+```
+
+**버그를 만들 뻔한 지점 — 날짜 문자열 BETWEEN의 자정 문제.** 실적
+집계(`actual_count`)는 `worklog_dao.count_search_worklogs()`를 그대로
+재사용하는데, 이 함수가 쓰는 `WHERE started_at BETWEEN %s AND %s`는
+"YYYY-MM-DD" 문자열을 넘기면 종료일이 그날 자정(00:00:00) 이전까지만
+잡힌다. WEEKLY/MONTHLY처럼 범위가 넓으면 마지막 하루 정도만 누락되니
+티가 잘 안 나지만, **DAILY 기간(시작일=종료일)은 그날 실적이 통째로
+0에 가깝게 집계되는 치명적인 문제**였다. 그래서 `_period_end_date()`로
+기간의 마지막 날짜를 구한 뒤, 종료일에 `" 23:59:59"`를 붙여서 넘기도록
+했다(`tests/test_production_target_service.py`의
+`test_passes_end_of_day_datetime_for_actual_count`가 이 지점을 고정해둠).
+기존 `worklogs/date`, `worklogs/search` 등은 이 문제를 그대로 안고 있는
+채인데, 이번에 새로 짜는 코드까지 같은 결함을 베껴올 이유는 없다고
+판단해 여기서는 바로 잡았다 — 기존 엔드포인트를 고칠지는 별개 판단.
+
+### 21.5 검증
+
+로컬 MariaDB(Windows 서비스, 100만 건 WorkLog)에 `migrate_mes_lite.sql`을
+직접 적용한 뒤, `python app.py`로 띄워서 실제 HTTP로 확인했다(Docker
+스택이 이미 5000 포트를 점유 중이라 `127.0.0.1:5000`으로 직접 지정해서
+호출 — `localhost`는 Windows에서 `::1`로 먼저 풀려 Docker 포트포워딩 쪽
+컨테이너로 새 나갔다. curl 시 `127.0.0.1` 명시가 안전함).
+
+- 마이그레이션 후 `WorkLog` 100만 건 중 29,880건(2.988%) 불량 — 목표
+  확률 3%와 부합
+- `GET /worklogs/stats/defect/{robot,line,work_type}` — 정상 응답
+- `GET /worklogs/stats/period?period_type=MONTHLY&start=2024-01-01&end=2024-12-31`
+  — 월별 버킷 12개, 각 total_count/defect_count/defect_rate/avg_minutes 확인
+- `GET /worklogs/stats/period` invalid period_type/날짜 누락 → 400 확인
+- `POST /production-targets`(line_id=1, MONTHLY, 2024-01-01, 800) → 201,
+  이어서 같은 조합으로 재등록(target_count=6000) → target_id 유지된 채
+  값만 갱신(UPSERT) 확인
+- `POST /production-targets`(line_id=9999) → 404 확인
+- `GET /production-targets/achievement?...` → target_count/actual_count/achievement_rate
+  정상 계산 확인, 목표 미등록 조합은 404 확인
+- `pytest tests/` 44개 전체 통과 (신규: `test_production_target_service.py`
+  9개, `test_worklog_service.py`에 기간별 집계 위임 테스트 1개 추가)
+
+새 파일: `dao/productiontarget_dao.py`, `service/production_target_service.py`,
+`routes/production_target.py`, `sql/migrate_mes_lite.sql`,
+`sql/docker-init/03_mes_lite.sql`, `tests/test_production_target_service.py`.
+기존 파일 변경: `dao/worklog_dao.py`, `service/worklog_service.py`,
+`routes/worklog.py`, `app.py`(블루프린트 등록), `scripts/insert_dummy.py`,
+`tests/test_worklog_service.py`, `README.md`.
+
+### Git 커밋
+
+```bash
+git add dao/worklog_dao.py dao/productiontarget_dao.py \
+        service/worklog_service.py service/production_target_service.py \
+        routes/worklog.py routes/production_target.py app.py \
+        sql/migrate_mes_lite.sql sql/docker-init/03_mes_lite.sql \
+        scripts/insert_dummy.py \
+        tests/test_worklog_service.py tests/test_production_target_service.py \
+        README.md docs/DEVLOG.md
+git commit -m "불량률 통계 + 목표 생산량 대비 달성률 API 추가 (MES-lite 확장)"
+git push
+```
