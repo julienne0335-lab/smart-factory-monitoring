@@ -1085,3 +1085,65 @@ git add dao/maintenance_dao.py dao/robot_dao.py service/maintenance_service.py \
 git commit -m "정비(Maintenance) 등록 API 추가 + joint_wear 초기화, robot_sensor_update/robot_maintenance 프론트 실시간 반영"
 git push
 ```
+
+---
+
+## 20. 테스트 커버리지 확장 — Maintenance/센서 반영 유닛 테스트 + Docker 스모크 테스트 (2026-08-22)
+
+18·19장 작업 직후 "새로 만든 기능에 테스트가 하나도 없다"는 게 눈에
+띄었다. 두 성격이 다른 구멍이라 서로 다른 방식으로 채웠다.
+
+### 20.1 유닛 테스트 — `tests/test_maintenance_service.py`(신규) + `test_robot_service.py` 보강
+
+기존 `test_error_service.py`의 `TestCreateRobotError`와 완전히 같은
+방식(dao/socketio를 `@patch`로 바꿔치기, `assert_called_once_with`로
+인자·순서 검증)을 그대로 따랐다.
+
+- `maintenance_service.create_maintenance()`: robot_id 없으면 DB에 아무것도
+  안 쓰고 None 반환 / 정상 등록 시 INSERT → `reset_joint_wear()` →
+  올바른 공장 room에 `robot_maintenance` emit 순서로 호출되는지
+- `robot_service.apply_sensor_reading()`: 17장에서 만들어진 뒤 지금까지
+  테스트가 하나도 없었던 함수. `update_robot_sensors()`가 존재 여부
+  확인 *전에* 항상 먼저 호출되는지(15.2절 rowcount 버그와 같은 이유),
+  없는 robot_id면 emit이 안 나가는지, DB 트리거가 재계산한 status를
+  그대로 emit payload에 실어 보내는지
+
+32개 테스트 전부 통과(`pytest tests/`).
+
+### 20.2 Docker 스모크 테스트 — `scripts/docker_smoke_test.py`(신규)
+
+유닛 테스트는 DB/소켓을 Mock으로 없애버리기 때문에, "컨테이너 3개가
+실제로 서로 붙어서 동작하는가"는 어차피 검증 범위 밖이다. 18장에서
+`docker compose up` 직후 수동으로 했던 curl 확인들(컨테이너 상태 →
+`/login` 응답 → `/api/robots` → 정비 등록 왕복)을 재사용 가능한 스크립트로
+옮겼다 — `docker compose ps`(JSON) 파싱 + `urllib`만 쓰고 표준 라이브러리
+바깥의 의존성은 추가하지 않았다.
+
+**발견한 버그 — 이 스크립트 자체가 17장 버그3를 두 번 재현했다**
+
+1. `subprocess.run(..., text=True)`가 Windows 기본 로케일(cp949)로
+   `docker compose ps` 출력을 디코딩하려다, 그 출력에 섞인 UTF-8 멀티바이트
+   문자(경로 말줄임표 `…` 등)에서 `UnicodeDecodeError`로 죽었다. `encoding="utf-8",
+   errors="replace"`를 명시해서 고쳤다.
+2. 그 다음엔 스크립트 자신의 `print()` 출력(한글 설명 문구)이 콘솔로
+   나가는 과정에서 같은 종류의 인코딩 문제를 일으켰다 — `mqtt_bridge.py`가
+   이미 쓰고 있던 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`를
+   동일하게 적용해서 해결했다.
+
+세 번째로 발견한 건 인코딩과 무관한 순수 로직 버그였다: `/login`처럼
+HTML을 반환하는 응답에도 무조건 `json.loads()`를 걸어서 `JSONDecodeError`로
+죽었다 — `_parse_json_if_possible()`을 만들어 JSON이 아니면 조용히 `None`을
+반환하도록 고쳤다.
+
+세 버그를 다 고친 뒤 실제 Docker 스택(18·19장) 대상으로 8개 체크(컨테이너
+3개 Running, db Healthy, `/login` 200, `/api/robots` 225대, 정비 등록
+POST→GET 왕복)가 전부 통과하는 것을 확인했다.
+
+### Git 커밋
+
+```bash
+git add tests/test_maintenance_service.py tests/test_robot_service.py \
+        scripts/docker_smoke_test.py README.md docs/DEVLOG.md
+git commit -m "정비/센서 반영 유닛 테스트 추가, Docker 스택 스모크 테스트 스크립트 추가"
+git push
+```

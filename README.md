@@ -105,6 +105,20 @@ python scripts/mqtt_sensor_simulator.py
 앱 컨테이너는 프로젝트 폴더를 그대로 마운트하므로 코드를 수정하면 (Werkzeug
 reloader가) 자동 반영됩니다.
 
+## 테스트
+
+```bash
+pip install -r requirements-test.txt
+pytest tests/          # service 계층 단위 테스트 (DB 없이, DAO/socketio는 Mock)
+```
+
+Docker 스택을 띄운 상태라면, 컨테이너 3개가 실제로 붙어서 동작하는지
+(DB 초기화, API 왕복까지) 확인하는 스모크 테스트도 있습니다:
+
+```bash
+python scripts/docker_smoke_test.py
+```
+
 ## 더 자세한 내용
 
 DB 설계 근거(DDL/View/Trigger/Index), Flask 계층 구조, ATM 프로젝트와의 도메인
